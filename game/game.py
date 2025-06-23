@@ -83,7 +83,7 @@ class Game:
         if collision:
             self.exit()
 
-    def set_background(self):
+    def set_background(self, time):
         # Manages the background and the header
         # Filling the white background
         self._display_surface.fill(WHITE)
@@ -91,14 +91,15 @@ class Game:
         header = pygame.Surface([self.width, self.header_height])
         header.fill(BLUE)
         # Header rectangle centered at center of header section
-        header_text = self.font.render("Skies to Fordow", True, RED)
+        time_s = int(time / 1000)
+        header_text = self.font.render(f"Skies to Fordow: {time_s}s Alive", True, RED)
         self._display_surface.blit(header, (0, 0))
-        self._display_surface.blit(header_text, (275, self.header_height / 2 - 30))
+        self._display_surface.blit(header_text, (150, self.header_height / 2 - 30))
 
     def update(self, time):
         # Updating the game state every tick
         # Have to fill the screen every tick
-        self.set_background()
+        self.set_background(time)
         # Check for events
         self._events = pygame.event.get()
         for event in self._events:
