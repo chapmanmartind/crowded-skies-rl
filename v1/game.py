@@ -4,29 +4,24 @@ import pygame
 from pygame.locals import QUIT, K_UP, K_RIGHT, K_DOWN, K_LEFT
 import sys
 import random
-
-RENDER_MODE = True
-
-BLACK = (0, 0, 0)
-WHITE = (255, 255, 255)
-RED = (255, 0, 0)
-BLUE = (0, 0, 255)
+from constants import (SCREEN_WIDTH, SCREEN_HEIGHT, HEADER_HEIGHT,
+                       WHITE, RED, BLUE)
 
 
 class Game:
-    def __init__(self, RENDER_MODE):
+    def __init__(self, human_mode, render_mode):
         # Initializing the game and its parameters
         # The game will be rendered if it is meant to be played by a human
         # For model training RENDER_MODE = False
 
         pygame.init()
-        self.render_mode = RENDER_MODE
-
-        self.width = 1000
-        self.height = 700
-
+        self.human_mode = human_mode
+        self.render_mode = render_mode
+        
+        self.width = SCREEN_WIDTH
+        self.height = SCREEN_HEIGHT
         # Number of pixels reserved for the header at the top
-        self.header_height = 100
+        self.header_height = HEADER_HEIGHT
 
         # Setting a display if we are rendering the game
         if self.render_mode:
@@ -35,11 +30,21 @@ class Game:
                 [self.width, self.height])
         else:
             self._display_surface = None
+
+        # Resetting the game state to initiate the game
+        self.reset()
+
+    def reset(self):
+        # Resets the game state
+        self.player = None
+        self.enemy_group = None
+
         self.spawn_player()
         self.instantiate_enemy_group()
 
-        # In this version of the game spawn only a single enemy
-        # and initialize its position to the player's current position
+        # For the current version, spawn a single enemy
+        # and only once
+        # and at the player's position
         self.spawn_enemy(init_pos=self.player.rect.center)
 
     def update(self):
@@ -105,7 +110,7 @@ class Game:
     def spawn_player(self):
         # Spawns the player
 
-        player = Player(self._display_surface, self.width,
+        player = Player(self.human_mode, self._display_surface, self.width,
                         self.height, self.header_height)
         self.player = player
 
@@ -123,13 +128,25 @@ class Game:
         enemy_group = EnemyGroup()
         self.enemy_group = enemy_group
 
+    def get_observation(self):
+        # The model will call this to get the game state
+        # What I put in here is based on what is currently in the game
+        # At this point, only returning the player and enemy_group objects
+
+        return (self.player, self.enemy_group)
+
 
 class Player(pygame.sprite.Sprite):
     # Using the built-in pygame.sprite.Sprite class for inheritance
-    def __init__(self, game_surface, game_width, game_height, header_height):
+    def __init__(self, human_mode, game_surface, game_width, game_height,
+                 header_height):
         super().__init__()
         # Instantiating the player object
+        # NOTE!! I AM NOT SURE IF HUMAN_MODE IS THE BEST WAY TO DEAL WITH 
+        # HUMAN/MODEL MOVEMENT -- TBD
+        # TODO: FIGURE THIS OUT
 
+        self.human_mode = human_mode
         self._game_surface = game_surface
         self.game_width = game_width
         self.game_height = game_height
@@ -148,41 +165,36 @@ class Player(pygame.sprite.Sprite):
     def update(self):
         # Updates the player's position and checks for collisions
 
-        self._pressed_keys = pygame.key.get_pressed()
         self.move()
         self.check_bounds()
 
     def move(self):
         # Moves the player based on the pressed directional keys
 
-        pressed_keys = self._pressed_keys
-        if pressed_keys[K_UP]:
-            # "UP" is the -y direction
-            self.rect.move_ip(0, -1)
-        if pressed_keys[K_RIGHT]:
-            self.rect.move_ip(1, 0)
-        if pressed_keys[K_DOWN]:
-            # "DOWN" is the +y direction
-            self.rect.move_ip(0, 1)
-        if pressed_keys[K_LEFT]:
-            self.rect.move_ip(-1, 0)
+        if self.human_mode:
+            pressed_keys = pygame.key.get_pressed()
+            if pressed_keys[K_UP]:
+                # "UP" is the -y direction
+                self.rect.move_ip(0, -1)
+            if pressed_keys[K_RIGHT]:
+                self.rect.move_ip(1, 0)
+            if pressed_keys[K_DOWN]:
+                # "DOWN" is the +y direction
+                self.rect.move_ip(0, 1)
+            if pressed_keys[K_LEFT]:
+                self.rect.move_ip(-1, 0)
+        else:
+            # TODO: FIGURE OUT WHAT TO DO NOT HUMAN MODE
+            pass
 
     def check_bounds(self):
         # Sets player.out_of_bounds to 1 if out of bounds, 0 otherwise
-
-        x, y = self.rect.center
-        x_left = x - self.width / 2
-        x_right = x + self.width / 2
-        # Note that towards the bottom of the screen is in the
-        # POSITIVE y direction
-        y_top = y - self.height / 2  # This is the lower numerical value
-        y_bot = y + self.height / 2  # This is the greater numerical value
-
         # The first header_height pixels are reserved for the header
-        self.out_of_bounds = ((x_left <= 0)
-                              or (x_right >= self.game_width)
-                              or (y_top <= self.header_height)
-                              or (y_bot >= self.game_height))
+
+        self.out_of_bounds = ((self.rect.left <= 0)
+                              or (self.rect.right >= self.game_width)
+                              or (self.rect.top <= self.header_height)
+                              or (self.rect.bottom >= self.game_height))
 
     def draw(self):
         # Draws the player onto the game surface
@@ -200,7 +212,6 @@ class EnemyGroup(pygame.sprite.Group):
             enemy.update()
             if enemy.out_of_bounds:
                 enemy.kill()
-                del enemy
 
     def draw(self):
         for enemy in self.sprites():
@@ -257,9 +268,7 @@ class Enemy(pygame.sprite.Sprite):
         # Note that for the basic enemy (not target seeking) the only out of
         # bounds possibility is left
 
-        x, y = self.rect.center
-        x_left = x - self.width / 2
-        self.out_of_bounds = (x_left <= 0)
+        self.out_of_bounds = (self.rect.left <= 0)
 
     def draw(self):
         # Draws the enemy onto the game surface
@@ -267,7 +276,11 @@ class Enemy(pygame.sprite.Sprite):
         self._game_surface.blit(self.image, self.rect)
 
 
-game = Game(RENDER_MODE)
+# Human mode describes if a human will be playing the game
+HUMAN_MODE = True
+# Render mode describes if the game will be rendered
+RENDER_MODE = True
+game = Game(HUMAN_MODE, RENDER_MODE)
 
 while True:
     game.update()
