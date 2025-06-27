@@ -1,4 +1,10 @@
 # This is the file which handles game logic
+# In this version of the game the game will spawn 5 large missiles one after
+# the other at the player's current position
+# Dodging all 5 missiles constitutes winning the game
+# Being struck by the missle or going out of bounds
+# constitutes losing the game
+
 
 import pygame
 from pygame.locals import QUIT, K_UP, K_RIGHT, K_DOWN, K_LEFT
@@ -17,7 +23,7 @@ class Game:
         pygame.init()
         self.human_mode = human_mode
         self.render_mode = render_mode
-        
+
         self.width = SCREEN_WIDTH
         self.height = SCREEN_HEIGHT
         # Number of pixels reserved for the header at the top
@@ -38,14 +44,10 @@ class Game:
         # Resets the game state
         self.player = None
         self.enemy_group = None
+        self.spawned_enemy_count = 0
 
         self.spawn_player()
         self.instantiate_enemy_group()
-
-        # For the current version, spawn a single enemy
-        # and only once
-        # and at the player's position
-        self.spawn_enemy(init_pos=self.player.rect.center)
 
     def update(self):
         # Updating the game state every tick
@@ -88,6 +90,14 @@ class Game:
     def update_characters(self):
         # Manages the player and the enemies
 
+        # Spawn an enemy if there are none one the screen
+        if not self.enemy_group:
+            self.spawn_enemy(self.player.rect.center)
+
+        # Exit if survived 5 enemies
+        if self.spawned_enemy_count == 6:
+            self.exit()
+
         self.player.update()
         self.enemy_group.update()
 
@@ -120,6 +130,7 @@ class Game:
         enemy = Enemy(self._display_surface, self.width, self.height,
                       self.header_height, init_pos)
         self.enemy_group.add(enemy)
+        self.spawned_enemy_count += 1
 
     def instantiate_enemy_group(self):
         # Instantiates the enemy group
@@ -142,7 +153,7 @@ class Player(pygame.sprite.Sprite):
                  header_height):
         super().__init__()
         # Instantiating the player object
-        # NOTE!! I AM NOT SURE IF HUMAN_MODE IS THE BEST WAY TO DEAL WITH 
+        # NOTE!! I AM NOT SURE IF HUMAN_MODE IS THE BEST WAY TO DEAL WITH
         # HUMAN/MODEL MOVEMENT -- TBD
         # TODO: FIGURE THIS OUT
 
@@ -231,8 +242,8 @@ class Enemy(pygame.sprite.Sprite):
         self.game_width = game_width
         self.game_height = game_height
         self.header_height = header_height
-        self.width = 20
-        self.height = 10
+        self.width = 40
+        self.height = 20
         self.image = pygame.Surface([self.width, self.height])
 
         # The rect is the actual physical representation on the screen
