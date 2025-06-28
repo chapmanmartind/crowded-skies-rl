@@ -4,11 +4,11 @@
 # Dodging all 5 missiles constitutes winning the game
 # Being struck by the missle or going out of bounds
 # constitutes losing the game
-
+# In this simplified version of the game you can only move up or down
 
 import pygame
-from pygame.locals import QUIT, K_UP, K_RIGHT, K_DOWN, K_LEFT
-import sys
+from pygame.locals import QUIT, K_UP, K_DOWN
+# import sys
 import random
 from constants import (SCREEN_WIDTH, SCREEN_HEIGHT, HEADER_HEIGHT,
                        WHITE, RED, BLUE)
@@ -42,9 +42,12 @@ class Game:
 
     def reset(self):
         # Resets the game state
+        self.game_over = False
+        self.victory = False
         self.player = None
         self.enemy_group = None
         self.spawned_enemy_count = 0
+        self.player_enemy_collision = 0
 
         self.spawn_player()
         self.instantiate_enemy_group()
@@ -96,12 +99,14 @@ class Game:
 
         # Exit if survived 5 enemies
         if self.spawned_enemy_count == 6:
+            self.victory = True
             self.exit()
 
         self.player.update()
         self.enemy_group.update()
 
         if self.player.out_of_bounds:
+            self.victory = False
             self.exit()
 
         # Check for a collision between the player and any member
@@ -109,13 +114,18 @@ class Game:
         collision = pygame.sprite.spritecollideany(
             self.player, self.enemy_group)
         if collision:
+            self.victory = False
             self.exit()
 
     def exit(self):
         # Exiting the game
+        # This should not actually exit the game. We want the outside process
+        # to exit the game
+        # so that way it can save game information before closing
 
-        pygame.quit()
-        sys.exit()
+        # pygame.quit()
+        # sys.exit()
+        self.game_over = True
 
     def spawn_player(self):
         # Spawns the player
@@ -142,9 +152,26 @@ class Game:
     def get_observation(self):
         # The model will call this to get the game state
         # What I put in here is based on what is currently in the game
-        # At this point, only returning the player and enemy_group objects
 
-        return (self.player, self.enemy_group)
+        player_pos = self.player.rect.center
+
+        # This only gets the first sprite, which is ok because in this game
+        # there will always only be 1
+        enemy_pos = self.enemy_group.sprites[0].rect.center
+
+        # The following isn't exactly true because an enemy could be on the
+        # screen but hasn't had the chance to collide with the player
+        # Regardless, the definitionis a good enough for now
+        enemies_survived = self.spawned_enemy_count
+
+        game_over = self.game_over
+        # In this version we don't actually need to check
+        # out of bounds or collision because going out of bounds
+        # is the same as colliding -> you lose the game
+        # so we can just check if self.victory is true or not
+        victory = self.victory
+
+        return [player_pos, enemy_pos, enemies_survived, game_over, victory]
 
 
 class Player(pygame.sprite.Sprite):
@@ -168,7 +195,7 @@ class Player(pygame.sprite.Sprite):
 
         # The rect is the actual physical representation on the screen
         self.rect = self.image.get_rect()
-        self.rect.center = (500, 300)
+        self.rect.center = (300, 300)
 
         # Setting out of bounds to 0 initially
         self.out_of_bounds = 0
@@ -181,19 +208,20 @@ class Player(pygame.sprite.Sprite):
 
     def move(self):
         # Moves the player based on the pressed directional keys
+        # In this simplified version of the game you can only move up or down
 
         if self.human_mode:
             pressed_keys = pygame.key.get_pressed()
             if pressed_keys[K_UP]:
                 # "UP" is the -y direction
                 self.rect.move_ip(0, -1)
-            if pressed_keys[K_RIGHT]:
-                self.rect.move_ip(1, 0)
+            # if pressed_keys[K_RIGHT]:
+            #    self.rect.move_ip(1, 0)
             if pressed_keys[K_DOWN]:
                 # "DOWN" is the +y direction
                 self.rect.move_ip(0, 1)
-            if pressed_keys[K_LEFT]:
-                self.rect.move_ip(-1, 0)
+            # if pressed_keys[K_LEFT]:
+            #    self.rect.move_ip(-1, 0)
         else:
             # TODO: FIGURE OUT WHAT TO DO NOT HUMAN MODE
             pass
@@ -285,13 +313,3 @@ class Enemy(pygame.sprite.Sprite):
         # Draws the enemy onto the game surface
 
         self._game_surface.blit(self.image, self.rect)
-
-
-# Human mode describes if a human will be playing the game
-HUMAN_MODE = True
-# Render mode describes if the game will be rendered
-RENDER_MODE = True
-game = Game(HUMAN_MODE, RENDER_MODE)
-
-while True:
-    game.update()
