@@ -10,9 +10,8 @@ import pygame
 from pygame.locals import QUIT, K_UP, K_DOWN
 # import sys
 import random
-from constants import (SCREEN_WIDTH, SCREEN_HEIGHT, HEADER_HEIGHT,
-                       WHITE, RED, BLUE,
-                       PLAYER_ACTION_DICT)
+from constants import (SCREEN_WIDTH, SCREEN_HEIGHT, HEADER_HEIGHT, TITLE, WHITE, RED, BLUE, PLAYER_ACTION_DICT,
+                       PLAYER_WIDTH, PLAYER_HEIGHT, ENEMY_WIDTH, ENEMY_HEIGHT)
 
 
 class Game:
@@ -29,14 +28,14 @@ class Game:
         self.height = SCREEN_HEIGHT
         # Number of pixels reserved for the header at the top
         self.header_height = HEADER_HEIGHT
+        self.title = TITLE
 
         self.player_action_dict = PLAYER_ACTION_DICT
 
         # Setting a display if we are rendering the game
         if self.render_mode:
             self.font = pygame.font.SysFont('Arial', 60, bold=True)
-            self._display_surface = pygame.display.set_mode(
-                [self.width, self.height])
+            self._display_surface = pygame.display.set_mode([self.width, self.height])
         else:
             self._display_surface = None
 
@@ -102,10 +101,10 @@ class Game:
         header.fill(BLUE)
 
         # Header rectangle centered at center of header section
-        header_text = self.font.render("Skies to Fordow", True, RED)
+        header_text = self.font.render(self.title, True, RED)
         self._display_surface.blit(header, (0, 0))
-        self._display_surface.blit(header_text,
-                                   (150, self.header_height / 2 - 30))
+        # Not ideal to hardcode position like this, but ok for now
+        self._display_surface.blit(header_text, (150, self.header_height / 2 - 30))
 
     def update_characters(self, action):
         # Manages the player and the enemies
@@ -128,8 +127,7 @@ class Game:
 
         # Check for a collision between the player and any member
         # of the enemy group
-        collision = pygame.sprite.spritecollideany(
-            self.player, self.enemy_group)
+        collision = pygame.sprite.spritecollideany(self.player, self.enemy_group)
         if collision:
             self.victory = False
             self.exit()
@@ -147,15 +145,13 @@ class Game:
     def spawn_player(self):
         # Spawns the player
 
-        player = Player(self.human_mode, self._display_surface, self.width,
-                        self.height, self.header_height)
+        player = Player(self.human_mode, self._display_surface, self.width, self.height, self.header_height)
         self.player = player
 
     def spawn_enemy(self, init_pos=None):
         # Spawns an enemy
 
-        enemy = Enemy(self._display_surface, self.width, self.height,
-                      self.header_height, init_pos)
+        enemy = Enemy(self._display_surface, self.width, self.height, self.header_height, init_pos)
         self.enemy_group.add(enemy)
         self.spawned_enemy_count += 1
 
@@ -172,22 +168,18 @@ class Game:
 
         player_pos = self.player.rect.center
 
-        # There is a bug where sometimes there is no enemy on the board when
-        # get_observation() is called. Therefore calling 
-        # self.enemy_group.sprites()[0].rect.center will throw an error.
-        # To fix this, only send in the true enemy position if there is an
-        # enemy on the board. Otherwise, send the expected enemy position
-        # (the current player position just off the screen)
+        # There is a bug where sometimes there is no enemy on the board when get_observation() is called.
+        # Therefore calling self.enemy_group.sprites()[0].rect.center will throw an error.
+        # To fix this, only send in the true enemy position if there is an enemy on the board.
+        # Otherwise, send the expected enemy position (the current player position just off the screen)
         # We always have to send something for enemy_pos
         enemy_group = self.enemy_group.sprites()
         if enemy_group:
             enemy_pos = self.enemy_group.sprites()[0].rect.center
         else:
-            # The 20 is hardcoded because I don't have access to the enemy
-            # width at the moment. It's not good practice but it should do
-            # for now
-            enemy_pos = ((self.width + 20) / 2,
-                         self.player.rect.center[1])
+            # The 20 is hardcoded because I don't have access to the enemy width at the moment.
+            # It's not good practice but it should do for now
+            enemy_pos = ((self.width + 20) / 2, self.player.rect.center[1])
 
         # The following isn't exactly true because an enemy could be on the
         # screen but hasn't had the chance to collide with the player
@@ -206,8 +198,7 @@ class Game:
 
 class Player(pygame.sprite.Sprite):
     # Using the built-in pygame.sprite.Sprite class for inheritance
-    def __init__(self, human_mode, game_surface, game_width, game_height,
-                 header_height):
+    def __init__(self, human_mode, game_surface, game_width, game_height, header_height):
         super().__init__()
         # Instantiating the player object
 
@@ -216,13 +207,14 @@ class Player(pygame.sprite.Sprite):
         self.game_width = game_width
         self.game_height = game_height
         self.header_height = header_height
-        self.width = 40
-        self.height = 20
+        self.width = PLAYER_WIDTH
+        self.height = PLAYER_HEIGHT
         self.image = pygame.Surface([self.width, self.height])
 
         # The rect is the actual physical representation on the screen
         self.rect = self.image.get_rect()
-        self.rect.center = (300, 300)
+        # Changed the x position from 300 -> self.game_width / 3
+        self.rect.center = (self.game_width / 3, self.game_height / 2)
 
         # Setting out of bounds to 0 initially
         self.out_of_bounds = 0
@@ -253,7 +245,7 @@ class Player(pygame.sprite.Sprite):
 
     def check_bounds(self):
         # Sets player.out_of_bounds to 1 if out of bounds, 0 otherwise
-        # The first header_height pixels are reserved for the header
+        # the first header_height pixels are reserved for the header
 
         self.out_of_bounds = ((self.rect.left <= 0)
                               or (self.rect.right >= self.game_width)
@@ -284,34 +276,30 @@ class EnemyGroup(pygame.sprite.Group):
 
 class Enemy(pygame.sprite.Sprite):
     # Using the built-in pygame.sprite.Sprite class for inheritance
-    def __init__(self, game_surface, game_width, game_height, header_height,
-                 init_pos=None):
+    def __init__(self, game_surface, game_width, game_height, header_height, init_pos=None):
         super().__init__()
         # Instantiating the Enemy object visually
-        # If init_pos is a set of coordinates, initalize there
-        # Otherwise, randomly
+        # If init_pos is a set of coordinates, initalize there. Otherwise, randomly
 
         self._game_surface = game_surface
         self.game_width = game_width
         self.game_height = game_height
         self.header_height = header_height
-        self.width = 40
-        self.height = 20
+        self.width = ENEMY_WIDTH
+        self.height = ENEMY_HEIGHT
         self.image = pygame.Surface([self.width, self.height])
 
         # The rect is the actual physical representation on the screen
         self.rect = self.image.get_rect()
 
-        # The start position of the object will ALWAYS be a random y cord just
-        # beyond the right side of the screen
+        # The start position of the object will ALWAYS be a random y cord just beyond the right side of the screen
         # (regardless of init_pos)
         x_pos = self.game_width + self.width / 2
         # The y position shouldn't be out of bounds for any part of the object
         if init_pos:
             y_pos = init_pos[1]
         else:
-            y_pos = random.randint(int(header_height + self.height / 2),
-                                   int(self.game_height - self.height / 2))
+            y_pos = random.randint(int(header_height + self.height / 2), int(self.game_height - self.height / 2))
 
         self.rect.center = (x_pos, y_pos)
         self.out_of_bounds = 0
@@ -329,8 +317,7 @@ class Enemy(pygame.sprite.Sprite):
 
     def check_bounds(self):
         # Sets enemy.out_of_bounds to 1 if out of bounds, 0 otherwise
-        # Note that for the basic enemy (not target seeking) the only out of
-        # bounds possibility is left
+        # Note that for the basic enemy (not target seeking) the only out of bounds possibility is left
 
         self.out_of_bounds = (self.rect.left <= 0)
 
