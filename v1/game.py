@@ -11,7 +11,8 @@ from pygame.locals import QUIT, K_UP, K_DOWN
 # import sys
 import random
 from constants import (SCREEN_WIDTH, SCREEN_HEIGHT, HEADER_HEIGHT,
-                       WHITE, RED, BLUE)
+                       WHITE, RED, BLUE,
+                       PLAYER_ACTION_DICT)
 
 
 class Game:
@@ -28,6 +29,8 @@ class Game:
         self.height = SCREEN_HEIGHT
         # Number of pixels reserved for the header at the top
         self.header_height = HEADER_HEIGHT
+
+        self.player_action_dict = PLAYER_ACTION_DICT
 
         # Setting a display if we are rendering the game
         if self.render_mode:
@@ -52,10 +55,10 @@ class Game:
         self.spawn_player()
         self.instantiate_enemy_group()
 
-    def update(self):
+    def update(self, action=None):
         # Updating the game state every tick
-        if self.render_mode:
-            self.render()
+        # Action is only None in human mode where we will
+        # read the action from the keyboard
 
         # Check for events
         self._events = pygame.event.get()
@@ -63,8 +66,22 @@ class Game:
             if event.type == QUIT:
                 self.exit()
 
+        if not action:
+            pressed_keys = pygame.key.get_pressed()
+            # In this version only 1 key can be pressed at a time
+            if pressed_keys[K_UP]:
+                action = self.player_action_dict['UP']
+            elif pressed_keys[K_DOWN]:
+                action = self.player_action_dict['DOWN']
+            else:
+                # No operation
+                action = self.player_action_dict['NO-OP']
+
         # Manage the characters' behavior
-        self.update_characters()
+        self.update_characters(action)
+
+        if self.render_mode:
+            self.render()
 
     def render(self):
         # Renders the game and all characters
@@ -90,7 +107,7 @@ class Game:
         self._display_surface.blit(header_text,
                                    (150, self.header_height / 2 - 30))
 
-    def update_characters(self):
+    def update_characters(self, action):
         # Manages the player and the enemies
 
         # Spawn an enemy if there are none one the screen
@@ -102,7 +119,7 @@ class Game:
             self.victory = True
             self.exit()
 
-        self.player.update()
+        self.player.update(action)
         self.enemy_group.update()
 
         if self.player.out_of_bounds:
@@ -155,9 +172,22 @@ class Game:
 
         player_pos = self.player.rect.center
 
-        # This only gets the first sprite, which is ok because in this game
-        # there will always only be 1
-        enemy_pos = self.enemy_group.sprites[0].rect.center
+        # There is a bug where sometimes there is no enemy on the board when
+        # get_observation() is called. Therefore calling 
+        # self.enemy_group.sprites()[0].rect.center will throw an error.
+        # To fix this, only send in the true enemy position if there is an
+        # enemy on the board. Otherwise, send the expected enemy position
+        # (the current player position just off the screen)
+        # We always have to send something for enemy_pos
+        enemy_group = self.enemy_group.sprites()
+        if enemy_group:
+            enemy_pos = self.enemy_group.sprites()[0].rect.center
+        else:
+            # The 20 is hardcoded because I don't have access to the enemy
+            # width at the moment. It's not good practice but it should do
+            # for now
+            enemy_pos = ((self.width + 20) / 2,
+                         self.player.rect.center[1])
 
         # The following isn't exactly true because an enemy could be on the
         # screen but hasn't had the chance to collide with the player
@@ -180,9 +210,6 @@ class Player(pygame.sprite.Sprite):
                  header_height):
         super().__init__()
         # Instantiating the player object
-        # NOTE!! I AM NOT SURE IF HUMAN_MODE IS THE BEST WAY TO DEAL WITH
-        # HUMAN/MODEL MOVEMENT -- TBD
-        # TODO: FIGURE THIS OUT
 
         self.human_mode = human_mode
         self._game_surface = game_surface
@@ -200,31 +227,29 @@ class Player(pygame.sprite.Sprite):
         # Setting out of bounds to 0 initially
         self.out_of_bounds = 0
 
-    def update(self):
+    def update(self, action):
         # Updates the player's position and checks for collisions
 
-        self.move()
+        self.move(action)
         self.check_bounds()
 
-    def move(self):
-        # Moves the player based on the pressed directional keys
+    def move(self, action):
+        # Moves the player based on the action
+        # Note that the player is unaware of where the action comes from
+        # That is, a human or the model
         # In this simplified version of the game you can only move up or down
 
-        if self.human_mode:
-            pressed_keys = pygame.key.get_pressed()
-            if pressed_keys[K_UP]:
-                # "UP" is the -y direction
-                self.rect.move_ip(0, -1)
-            # if pressed_keys[K_RIGHT]:
-            #    self.rect.move_ip(1, 0)
-            if pressed_keys[K_DOWN]:
-                # "DOWN" is the +y direction
-                self.rect.move_ip(0, 1)
-            # if pressed_keys[K_LEFT]:
-            #    self.rect.move_ip(-1, 0)
-        else:
-            # TODO: FIGURE OUT WHAT TO DO NOT HUMAN MODE
+        if action == 0:
+            # 0 corresponds to no-op
             pass
+        if action == 1:
+            # 1 corresponds to up
+            # "UP" is the -y direction
+            self.rect.move_ip(0, -1)
+        if action == 2:
+            # 2 corresponds to down
+            # "DOWN" is the +y direction
+            self.rect.move_ip(0, 1)
 
     def check_bounds(self):
         # Sets player.out_of_bounds to 1 if out of bounds, 0 otherwise
