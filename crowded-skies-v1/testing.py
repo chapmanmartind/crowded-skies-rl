@@ -28,7 +28,7 @@ def test_models(model_path_arr):
     # We want to test but not render. Rendering is extremely slow
     testing = True
     render = False
-    deterministic = False
+    deterministic = True
     num_test_episodes = 100
     point_arr = []
     for path in model_path_arr:
@@ -48,7 +48,7 @@ def test_models(model_path_arr):
     return point_arr
 
 
-generate_models([0, 100, 1000, 10000, 100000])
+#generate_models([0, 100, 1000, 10000, 100000])
 model_path_arr = ["models/Q_table_0_episodes.npy", "models/Q_table_100_episodes.npy",
                   "models/Q_table_1000_episodes.npy", "models/Q_table_10000_episodes.npy",
                   "models/Q_table_100000_episodes.npy"]
