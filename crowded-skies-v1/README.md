@@ -1,6 +1,6 @@
 # CROWDED SKIES
 
-A personal project to learn Reinforcement Learning and improve my software engineering skills
+A personal project to learn Reinforcement Learning and improve my software engineering skills.
 This project comprises a simple projectile dodging game and a Q-Learning Reinforcement model on top of it.
 The model was built from scratch and does not use any RL libraries. The game is built on top of pygame, a minimal game library.
 You can play the game or watch the model play it. You can also train new "weights" for the model for yourself. 
