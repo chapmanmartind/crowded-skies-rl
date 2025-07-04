@@ -57,9 +57,3 @@ def test_models(model_path_arr):
 #point_arr = test_models(model_path_arr)
 #print(point_arr)
 
-human_mode = True
-render_mode = True
-no_enemies = True
-game = Game(human_mode, render_mode, no_enemies)
-while True:
-    game.update()
