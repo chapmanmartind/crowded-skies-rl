@@ -11,6 +11,7 @@ from pygame.locals import QUIT, K_UP, K_DOWN
 import sys
 import random
 from constants import (SCREEN_WIDTH, SCREEN_HEIGHT, HEADER_HEIGHT, TITLE, BLACK, WHITE, RED, BLUE, PLAYER_ACTION_DICT,
+                       GRAVITY_CONST, FORCE_CONST, PLAYER_IMG_PATH, EXHAUST_IMG_PATH, ENEMYSTRAIGHTMISSILE_IMG_PATH,
                        PLAYER_WIDTH, PLAYER_HEIGHT, ENEMY_WIDTH, ENEMY_HEIGHT)
 import numpy as np
 
@@ -205,33 +206,68 @@ class Game:
 
         return [player_pos, enemy_pos, enemies_survived, game_over, victory]
 
-class Player(pygame.sprite.Sprite):
-    # Using the built-in pygame.sprite.Sprite class for inheritance
-    def __init__(self, human_mode, game_surface, game_width, game_height, header_height):
-        super().__init__()
-        # Instantiating the player object
 
+class Character(pygame.sprite.Sprite):
+    # The base class for the player and all enemies
+    # I don't know how helpful this is considering almost all the methods have to be
+    # implemented by the subclasses themselves. But it seems like good practice.
+    def __init__(self, game_surface, game_width, game_height, header_height):
         self.human_mode = human_mode
         self._game_surface = game_surface
         self.game_width = game_width
         self.game_height = game_height
         self.header_height = header_height
+        self.out_of_bounds = 0
+        self.image = None
+        self.rect = None
+
+        self.velocity = pygame.Vector2(0, 0)
+        self.acceleration = pygame.Vector2(0, 0)
+
+    def update(self, action=None):
+        raise NotImplementedError("Subclass must implement update")
+
+    def move(self, action=None):
+        raise NotImplementedError("Subclass must implement move")
+
+    def check_bounds(self):
+        # Sets player.out_of_bounds to 1 if out of bounds, 0 otherwise
+        # the first header_height pixels are reserved for the header
+
+        self.out_of_bounds = ((self.rect.left <= 0)
+                              or (self.rect.right >= self.game_width)
+                              or (self.rect.top <= self.header_height)
+                              or (self.rect.bottom >= self.game_height))
+
+    def apply_gravity(self):
+        # Applies gravity
+        # For logical consistentency and for the sake of analoigy to physics
+        # all characters will be affected by grabity
+        # Eben if their movement doesn't reflect it (they fly straight)
+
+        self.acceleration.y -= GRAVITY_CONST
+
+class Player(Character):
+    # Using the character class for inheritance
+    def __init__(self, human_mode):
+        super().__init__()
+        # Instantiating the player object
+
+        self.human_mode = human_mode
         self.width = PLAYER_WIDTH
         self.height = PLAYER_HEIGHT
-
         # For some reason "pygame.SRCALPHA" is necessary for rotation
-        self.image = pygame.Surface([self.width, self.height]).convert_alpha()
+        self.image = pygame.transform.scale(pygame.image.load(PLAYER_IMG_PATH), (self.width, self.height))
+        self.exhaust_image = pygame.transform.scale(pygame.image.load(EXHAUST_IMG_PATH),
+                                                    (self.width * 1.48, self.height))
 
         # The rect is the actual physical representation on the screen
         self.rect = self.image.get_rect()
         # Changed the x position from 300 -> self.game_width / 3
         self.rect.center = (self.game_width / 3, self.game_height / 2)
 
-        # Setting out of bounds to 0 initially
-        self.out_of_bounds = 0
-
-        self.y_velocity = 0
-        self.y_acceleration = 0
+        # This will be used to trigger the exhaust image
+        self.acceleration_flag = 0
 
     def update(self, action):
         # Updates the player's position and checks for collisions
@@ -247,32 +283,29 @@ class Player(pygame.sprite.Sprite):
         # and then flip the movement direction only in the final step to align with pygame's internal convention
         # of downwards being the +y direction
 
-        # Applying gravity
-        self.y_acceleration = 0
-        self.y_acceleration -= .5
+        # We need to reset the acceleration every move because the acceleration is a function of force
+        # which doesn't propgate across moves. A force is applied only for an instant - a single move
+        self.acceleration = pygame.Vector2()
+        self.acceleration_flag = 0
+        # This is the acceleration constant that seems to work with the frame rate and force constant
+        self.apply_gravity()
 
         if action == 0:
             # 0 corresponds to no-op
             pass
         if action == 1:
             # 1 corresponds to up
-            self.y_acceleration += 1.5
-            
+            self.acceleration.y += FORCE_CONST
+            self.acceleration_flag = 1
+
         if action == 2:
             # 2 corresponds to down
-            self.y_acceleration -= 1.5
-        self.y_velocity += self.y_acceleration
-        self.rect.move_ip(0, -1 * self.y_velocity)
+            self.acceleration.y -= FORCE_CONST
+            self.acceleration_flag = 1
 
-
-    def check_bounds(self):
-        # Sets player.out_of_bounds to 1 if out of bounds, 0 otherwise
-        # the first header_height pixels are reserved for the header
-
-        self.out_of_bounds = ((self.rect.left <= 0)
-                              or (self.rect.right >= self.game_width)
-                              or (self.rect.top <= self.header_height)
-                              or (self.rect.bottom >= self.game_height))
+        self.velocity += self.acceleration
+        # We need to deal with the x and y velocities separately now because of the direction of the y axis
+        self.rect.move_ip(self.velocity.x, -1 * self.velocity.y)
 
     def draw(self):
         # Draws the player onto the game surface
@@ -280,20 +313,19 @@ class Player(pygame.sprite.Sprite):
 
         # In real life the angle is solely in the direction of motion (and so unconcerned with acceleration)
         # However an acceleration component makes the game feel more responsive
-        angle = - (0.6 * self.y_velocity + 0.4 * self.y_acceleration) * -3
-
+        angle = (0.6 * self.velocity.y + 0.4 * self.acceleration.y) * 3
         # We don't want the angle to surpass 90 degrees because the player (a missle)
-        # cannot really tilt "backwards" while ascending or descending
+        # cannot tilt "backwards" while ascending or descending
         angle = np.clip(angle, -90, 90)
-        self.surf = pygame.Surface(self.rect.size, pygame.SRCALPHA)
-        self.surf.fill(BLACK)
-        self.rot_surf = pygame.transform.rotate(self.surf, round(angle))
-        new_rect = self.rot_surf.get_rect(center=self.rect.center)
 
-        #self.image.fill(BLACK)
-        #print(angle)
-        #self.image = pygame.transform.rotate(self.image, angle)
-        self._game_surface.blit(self.rot_surf, new_rect)
+        if not self.acceleration_flag:
+            self.rotated_image = pygame.transform.rotate(self.image, round(angle))
+            new_rect = self.rotated_image.get_rect(center=self.rect.center)
+            self._game_surface.blit(self.rotated_image, new_rect)
+        else:
+            self.rotated_image = pygame.transform.rotate(self.exhaust_image, round(angle))
+            new_rect = self.rotated_image.get_rect(center=(self.rect.center[0] - self.width / 4, self.rect.center[1]))
+            self._game_surface.blit(self.rotated_image, new_rect)
 
 
 class EnemyGroup(pygame.sprite.Group):
@@ -311,6 +343,55 @@ class EnemyGroup(pygame.sprite.Group):
         for enemy in self.sprites():
             enemy.draw()
 
+
+class EnemyStraightMissile(Character):
+    # Using the built-in pygame.sprite.Sprite class for inheritance
+    # This is the basic enemy missile which goes straight
+    def __init__(self, init_pos=None):
+        super().__init__()
+        # Instantiating the Enemy object visually
+        # If init_pos is a set of coordinates, initalize there. Otherwise, randomly
+
+        self.width = ENEMY_WIDTH
+        self.height = ENEMY_HEIGHT
+        self.image = pygame.transform.scale(pygame.image.load(ENEMYSTRAIGHTMISSILE_IMG_PATH), (self.width, self.height))
+
+        # The rect is the actual physical representation on the screen
+        self.rect = self.image.get_rect()
+
+        # The start position of the object will ALWAYS be a random y cord just beyond the right side of the screen
+        # (regardless of init_pos)
+        x_pos = self.game_width + self.width / 2
+        # The y position shouldn't be out of bounds for any part of the object
+        if init_pos:
+            y_pos = init_pos[1]
+        else:
+            y_pos = random.randint(int(self.header_height + self.height / 2), int(self.game_height - self.height / 2))
+
+        self.rect.center = (x_pos, y_pos)
+        self.out_of_bounds = 0
+
+    def update(self):
+        # Updates the enemy's position and checks for collisions
+
+        self.move()
+        self.check_bounds()
+
+    def move(self):
+        # The basic enemy object moves left only
+
+        self.rect.move_ip(-1, 0)
+
+    def check_bounds(self):
+        # Sets enemy.out_of_bounds to 1 if out of bounds, 0 otherwise
+        # Note that for the basic enemy (not target seeking) the only out of bounds possibility is left
+
+        self.out_of_bounds = (self.rect.left <= 0)
+
+    def draw(self):
+        # Draws the enemy onto the game surface
+
+        self._game_surface.blit(self.image, self.rect)
 
 class Enemy(pygame.sprite.Sprite):
     # Using the built-in pygame.sprite.Sprite class for inheritance
@@ -349,9 +430,12 @@ class Enemy(pygame.sprite.Sprite):
         self.check_bounds()
 
     def move(self):
-        # The basic enemy object moves left only
-
-        self.rect.move_ip(-1, 0)
+        # IN this version we are propogating the more realistic physics-based approach
+        # This enemy will have a constant y velocity as instantiated in the initialization.
+        # So to move we will apply that y velocity
+        
+        # Note we have to invert the y component of the velocity to reflect pygame's y coordinate convention
+        self.rect.move_ip(self.velocity.x, -1 * self.velocity.y)
 
     def check_bounds(self):
         # Sets enemy.out_of_bounds to 1 if out of bounds, 0 otherwise
@@ -363,3 +447,10 @@ class Enemy(pygame.sprite.Sprite):
         # Draws the enemy onto the game surface
 
         self._game_surface.blit(self.image, self.rect)
+
+human_mode = True
+render_mode = True
+no_enemies = True
+game = Game(human_mode, render_mode, no_enemies)
+while True:
+    game.update()
