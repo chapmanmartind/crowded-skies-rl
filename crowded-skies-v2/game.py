@@ -232,28 +232,49 @@ class Game:
         # how many enemies we have
         # I don't think we can currently have more than 3 enemies on the screen at once. Let's allocate 4 to be safe.
         # [enemy position, enemy velocity, enemy type]
-        # It will be convenient for our model to turn everything here into np arrays. So let's do that now
-        enemy_buffer = [[[0, 0], [0, 0], 0] for i in range(4)]
+        # Because of bugs in model.py we will flatten the array here
+        # If this seems stupid, I know. But I think this will fix the bugs dealing with deep inhomogenous length arrays
+
+        observation = []
+
+        # Adding the player observations
+        observation.append(self.player.rect.center[0])
+        observation.append(self.player.rect.center[1])
+        observation.append(self.player.velocity.x)
+        observation.append(self.player.velocity.y)
+
+        # Adding the enemy observations
         enemy_group = self.enemy_group.sprites()
+        # We need to add the entire enemy buffer regardless if they exist
+        enemy_buffer = [0] * 20
         for i in range(len(enemy_group)):
             if i > 3:
-                print("CHARCTER BUFFER OVERFLOW")
+                print("CHARCTER BUFFER OVERFLOW -- EXITING NOW")
+                pygame.quit()
+                sys.exit()
             enemy = enemy_group[i]
-            pos = np.array(enemy.rect.center)
-            vel = np.array(enemy.velocity)
-            type = enemy.type
-            enemy_buffer[i] = [pos, vel, type]
+            enemy_buffer[5 * i] = enemy.rect.center[0]
+            enemy_buffer[5 * i + 1] = enemy.rect.center[1]
+            enemy_buffer[5 * i + 2] = enemy.velocity.x
+            enemy_buffer[5 * i + 3] = enemy.velocity.y
+            enemy_buffer[5 * i + 4] = enemy.type
 
+        observation += enemy_buffer
+
+        # Adding the general game observations
+        observation.append(self.frame)
+        observation.append(self.spawned_enemy_count)
+        observation.append(self.player.out_of_bounds)
+        observation.append(self.player.crash)
+        observation.append(self.game_over)
+        observation.append(self.victory)
         # In this version (unlike the previous) we want to send in out of bounds and collision separately to give the
         # network more information. This is a fairly small input for a neural network so sending more information in
         # is not an issue at the moment
         # The total observation size is 2 + 2 + 4 * 5 + 1 + 1 + 1 + 1 + 1 + 1 = 30 floats
-
-        # We want to turn all tuples into arrays because dealing with tuples will become a headache in the model
-        observation = [np.array(self.player.rect.center), np.array(self.player.velocity),
-                       enemy_buffer, self.frame, self.spawned_enemy_count, self.player.out_of_bounds,
-                       self.player.crash, self.game_over, self.victory]
-
+        if len(observation) != 30:
+            print("BIG FUCKING ERROR")
+            print(observation)
         return observation
 
     def manage_gameplay(self):
@@ -297,11 +318,3 @@ class Game:
             if not (len(self.enemy_group.sprites())):
                 self.victory = True
                 self.exit()
-
-
-human_mode = True
-render_mode = True
-no_enemies = False
-game = Game(human_mode, render_mode, no_enemies)
-while True:
-    game.update()
