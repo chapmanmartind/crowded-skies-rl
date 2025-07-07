@@ -217,35 +217,44 @@ class Game:
     def get_observation(self):
         # The model will call this to get the game state
         # What I put in here is based on what is currently in the game
+        # In this version of the game I want to pass in
+        # - player position and velocity
+        # - enemy position, velocity, and type for every enemy on the screen
+        # - number of frames
+        # - number of enemies spawned
+        # - out of bounds
+        # - collision
+        # - game over
+        # - victory
 
-        player_pos = self.player.rect.center
-
-        # There is a bug where sometimes there is no enemy on the board when get_observation() is called.
-        # Therefore calling self.enemy_group.sprites()[0].rect.center will throw an error.
-        # To fix this, only send in the true enemy position if there is an enemy on the board.
-        # Otherwise, send the expected enemy position (the current player position just off the screen)
-        # We always have to send something for enemy_pos
+        # The length of enemy_group is variable. However, the network cannot accept variable length input.
+        # Therefore we have to allocate a 0 buffer of the maximum possible length and overwrite it according to
+        # how many enemies we have
+        # I don't think we can currently have more than 3 enemies on the screen at once. Let's allocate 4 to be safe.
+        # [enemy position, enemy velocity, enemy type]
+        # It will be convenient for our model to turn everything here into np arrays. So let's do that now
+        enemy_buffer = [[[0, 0], [0, 0], 0] for i in range(4)]
         enemy_group = self.enemy_group.sprites()
-        if enemy_group:
-            enemy_pos = self.enemy_group.sprites()[0].rect.center
-        else:
-            # The 20 is hardcoded because I don't have access to the enemy width at the moment.
-            # It's not good practice but it should do for now
-            enemy_pos = ((self.width + 20) / 2, self.player.rect.center[1])
+        for i in range(len(enemy_group)):
+            if i > 3:
+                print("CHARCTER BUFFER OVERFLOW")
+            enemy = enemy_group[i]
+            pos = np.array(enemy.rect.center)
+            vel = np.array(enemy.velocity)
+            type = enemy.type
+            enemy_buffer[i] = [pos, vel, type]
 
-        # The following isn't exactly true because an enemy could be on the
-        # screen but hasn't had the chance to collide with the player
-        # Regardless, the definitionis a good enough for now
-        enemies_survived = self.spawned_enemy_count
+        # In this version (unlike the previous) we want to send in out of bounds and collision separately to give the
+        # network more information. This is a fairly small input for a neural network so sending more information in
+        # is not an issue at the moment
+        # The total observation size is 2 + 2 + 4 * 5 + 1 + 1 + 1 + 1 + 1 + 1 = 30 floats
 
-        game_over = self.game_over
-        # In this version we don't actually need to check
-        # out of bounds or collision because going out of bounds
-        # is the same as colliding -> you lose the game
-        # so we can just check if self.victory is true or not
-        victory = self.victory
+        # We want to turn all tuples into arrays because dealing with tuples will become a headache in the model
+        observation = [np.array(self.player.rect.center), np.array(self.player.velocity),
+                       enemy_buffer, self.frame, self.spawned_enemy_count, self.player.out_of_bounds,
+                       self.player.crash, self.game_over, self.victory]
 
-        return [player_pos, enemy_pos, enemies_survived, game_over, victory]
+        return observation
 
     def manage_gameplay(self):
         # This function will manage the gameplay - what enemies are spawned when

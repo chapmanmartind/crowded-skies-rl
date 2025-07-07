@@ -2,133 +2,101 @@
 
 from game import Game
 from constants import (SCREEN_WIDTH, SCREEN_HEIGHT, NUM_WIDTH_BINS, NUM_HEIGHT_BINS,
-                       NUM_PLAYER_ACTIONS, PLAYER_ACTION_DICT, ALPHA, GAMMA)
+                       OBSERVATION_LEN, REPLAY_BUFFER_CAPACITY, BATCH_SIZE, GAMMA,
+                       NUM_PLAYER_ACTIONS, PLAYER_ACTION_DICT)
 import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optimizer
 
+class DQN():
+    def __init__(self, testing, render, num_episodes, model_save_path,
+                 channels=[OBSERVATION_LEN, 128, 128, NUM_PLAYER_ACTIONS], deterministic=True):
 
-class Model():
-    def __init__(self, testing, render, num_episodes, model_save_path, deterministic=True):
-        # Initializing the model
+        # This Deep Quality Network class will manage collecting data, training, and move execution
 
-        # 0 for training, 1 for testing
+        # Testing is True for testing, False for training
         self.testing = testing
-        # 0 to not render the screen, 1 to render
+        # Render is True for rendering the screen and gameplay, False for no render (training and evaluation)
         self.render = render
-        self.screen_width = SCREEN_WIDTH
-        self.screen_height = SCREEN_HEIGHT
-        # For this version of the game the player cannot move left/right
-        self.num_height_bins = NUM_HEIGHT_BINS
-        self.num_width_bins = NUM_WIDTH_BINS
-        self.num_player_actions = NUM_PLAYER_ACTIONS
-        self.player_action_dict = PLAYER_ACTION_DICT
         self.num_episodes = num_episodes
-        # This is the learning rate
-        self.alpha = ALPHA
-        # This is the expected future return discount rate
-        self.gamma = GAMMA
-
-        # if in training this is the path the model will be saved to
-        # if in testing this is the path the model will be loaded from
         self.model_save_path = model_save_path
-
-        # If we are testing we may want the test to execute deterministically (always go for the best possible move)
-        # or just usually go for the best
-        # possible move
-        self.deterministic = deterministic
-        # For this version the player cannot move in the x direction
-        num_player_x_bins = 0
-        num_player_y_bins = self.num_height_bins
-        # Technically the enemy starts off of the screen so we need to allocate one more bin to take that into account
-        num_enemy_x_bins = self.num_width_bins + 1
-        num_enemy_y_bins = self.num_height_bins
+        self.batch_size = BATCH_SIZE
+        self.gamma = GAMMA
+        # The DQN will utilize a replay buffer which is an array of the following
+        # state, action, reward, following state, and done (a boolean that indicates if the game finished after this state)
+        # I am going to define a blank replay and fill the replay buffer with this. I know this is not ideal and trains the model on false data
+        # However, by doing this I don't have the handle the logic of only selecting from parts of the buffer that have been written to
+        # A single state comprises
+        # - player position and velocity,
+        # - enemy position, velocity, and type for every enemy on the screen
+        # - number of frames
+        # - number of enemies spawned
+        # - out of bounds
+        # - collision
+        # - game over
+        # - victory
+        # So a single replay has the form [[state], action, reward, [following state], done]
+        # And each state has the form [[(x, y), (xv, yv)], [[(xe, ye), (xev, yev), etype] x 4], f, n, b, c, g, v]
+        # which will be unraveled into an array of length 30
+        # We do NOT want tuples here. Tuples will cause us issues down the line
+        blank_enemy_state = [[[0, 0], [0, 0], 0] for i in range(4)]
+        blank_game_state = [[0, 0], [0, 0]].append(blank_enemy_state).append([0, 0, 0, 0, 0, 0])
+        blank_replay = [blank_game_state, 0, 0, blank_game_state, 0]
+        self.replay_buffer = [blank_replay for n in range(REPLAY_BUFFER_CAPACITY)]
+        self.network = Network(channels, model_save_path)
 
         self.human_mode = False
-        self.game = Game(self.human_mode, self.render)
-        self.table = Q_Table(num_player_x_bins, num_player_y_bins, num_enemy_x_bins, num_enemy_y_bins,
-                             self.num_player_actions)
-        if self.testing:
-            # If we are testing we want to overwrite table.table with the
-            # pre-trained table with path self.model_save_path
-            self.table.load_table(self.model_save_path)
-            self.deterministic = deterministic
+        no_enemies = False
+
+        game = Game(self.human_mode, self.render, no_enemies)
+        self.game = game
 
     def train(self):
+        # Training the DQN
+        # In this model we are collecting data and training simultaenously. We collect a batch size's worth of data
+        # then randomly sample the training buffer and use that data as our training data
 
-        for episode_num in range(self.num_episodes):
-            # We need to reset the game after it is done to prepare for the
-            # next episode
+        if self.human_buffer_fill:
+            # TODO: Implement this
+            pass
+
+        replay_num = 0
+        for episode in range(self.num_episodes):
             self.game.reset()
 
             while not self.game.game_over:
-                self.run_episode(episode_num)
+                # Here we are updating the gameplay buffer by playing the game with the network's current weights
+                # Get the initial observation to form our transition
+                state = self.game.get_observation()
+                # Unravel the state to a 1D array to feed into the network
+                # state_unraveled will now be a 1D torch tensor
+                state_unraveled = self.unravel_observation(state)
+                # The network predicts the rewards associated with each move in this state
+                rewards = self.network(state_unraveled)
+                # We pick our next action according to our epsilon greedy strategy
+                action = self.choose_action(rewards, episode)
+                self.game.update(action)
+                state_after = self.game.get_observation()
+                reward = self.calculate_reward(state_after)
+                # A single transition has the form [[state], action, reward, [following state], done]
+                transition = [state, action, reward, state_after, self.game.game_over]
+                self.replay_buffer[replay_num] = transition
 
-            if (episode_num % 1000) == 0 and episode_num != 0:
-                print(f"{(episode_num / self.num_episodes) * 100}% done with training")
+                # Now we want to train if we have hit enough new replays
+                if not (replay_num % self.batch_size):
+                    self.update_network()
+                
+                replay_num += 1
 
-        self.table.save(self.model_save_path)
-        print(f"Model saved to {self.model_save_path}")
+            if not (episode % 100):
+                print(f"{episode / self.num_episodes * 100}% done with training")
+        
+        self.network.save()
 
-    def run_episode(self, episode_num):
-        # observation: [player_pos, enemy_pos, enemies_survived, game_over, victory]
 
-        # Getting the current observation before the new episode, the current state s
-        # I am only getting the current player and enemy positions to minimize confusion
-        (player_pos, enemy_pos, _, _, _) = self.game.get_observation()
-        # We have to bin the positions for the table to use them
-        player_pos_binned, enemy_pos_binned = self.bin_positions(player_pos, enemy_pos)
-        # This is the action a that you take while in state s
-        action = self.choose_action(episode_num, player_pos_binned, enemy_pos_binned)
-        # Applying the new action
-        self.game_step(action)
-        # We have to distinguish the current position from the new position because the current position
-        # is used to calculate the value of the current state whereas the new position is used to predict
-        # the maximum possible Q-value immedaitely achievable from the current state
-        (player_pos_new, enemy_pos_new, enemies_survived, game_over,
-         victory) = self.game.get_observation()
-        player_pos_new_binned, enemy_pos_new_binned = self.bin_positions(
-                                                                player_pos_new,
-                                                                enemy_pos_new)
-        # Getting the new Q-Table value from the update calculation
-        Q_val_updated = self.calculate_update(action, player_pos_binned, enemy_pos_binned,
-                                              player_pos_new_binned, enemy_pos_new_binned,
-                                              enemies_survived, game_over, victory)
-        self.table.set(player_pos_binned, enemy_pos_binned, action, Q_val_updated)
-
-    def game_step(self, action):
-        # Runs a single step of the game
-
-        self.game.update(action)
-
-    def calculate_update(self, action, player_pos_binned, enemy_pos_binned, player_pos_new_binned, enemy_pos_new_binned,
-                         enemies_survived, game_over, victory):
-        # The overall update function is given by
-        # Q(s,a) <- Q(s, a) + alpha[R + gamma*M - Q(s, a)]
-        # Where Q(s, a) is the former Q-value estimation
-        # alpha is the learning rate
-        # R is the immediate reward
-        # gamma is the discount rate
-        # M is the Q-value of the optimal next state
-
-        # The model always gets a raw reward based on how many enemies it has survived to incentivize moving forward
-        # and then subtracts from value if it lost and adds more if it won
-        raw_reward = enemies_survived
-        if game_over:
-            # (victory - 0.5) * 20 because victory is 0 or 1
-            # which is then converted to -10 or 10
-            raw_reward += (victory - 0.5) * 20
-
-        Q_val = self.table.get(player_pos_binned, enemy_pos_binned, action)
-        possible_values = []
-        for key in self.player_action_dict.keys():
-            possible_action = self.player_action_dict[key]
-            possible_value = self.table.get(player_pos_new_binned, enemy_pos_new_binned, possible_action)
-            possible_values.append(possible_value)
-        M = np.max(possible_values)
-        # Calculating the updated Q-value based on the formula described above
-        Q_val_updated = (Q_val + self.alpha * (raw_reward + self.gamma * M - Q_val))
-        return Q_val_updated
-
-    def choose_action(self, episode_num, player_pos_binned, enemy_pos_binned):
+    def choose_action(self, rewards, episode):
         # During training we need to choose an action from the table according to
         # the epsilon-greedy policy
         # Epsilon represents the odds of choosing a random move
@@ -140,8 +108,7 @@ class Model():
 
         # The value of epsilon here is defined as a negative exponential
         # as a function of the episode number
-        # In an earlier version I used epsilon = np.exp(-5 * (episode_num / self.num_episodes))
-        epsilon = 1 - episode_num / self.num_episodes
+        epsilon = np.exp(-5 * (episode / self.num_episodes))
         action = None
 
         if epsilon > np.random.rand():
@@ -149,34 +116,16 @@ class Model():
             action = np.random.randint(0, self.num_player_actions)
         else:
             # choose the best action
-            no_op_val = self.table.get(player_pos_binned, enemy_pos_binned, self.player_action_dict['NO-OP'])
-            up_val = self.table.get(player_pos_binned, enemy_pos_binned, self.player_action_dict['UP'])
-            down_val = self.table.get(player_pos_binned, enemy_pos_binned, self.player_action_dict['DOWN'])
 
             # This isn't best practice because I am hard-coding the actions with their values rather than using
             # the action dictionary but doing otherwise is too much of a headache
-            action = self.argmax_random_on_ties([no_op_val, up_val, down_val])
+            action = self.argmax_random_on_ties([rewards[0], rewards[1], rewards[2]])
 
         return action
 
-    def bin_positions(self, player_pos, enemy_pos):
-        # Puts the player and enemy positions into their correct bins
-
-        x_compression_ratio = self.screen_width / self.num_width_bins
-        y_compression_ratio = self.screen_height / self.num_height_bins
-
-        player_x_bin = (np.floor(player_pos[0] / x_compression_ratio).astype(int))
-        player_y_bin = (np.floor(player_pos[1] / y_compression_ratio).astype(int))
-        enemy_x_bin = (np.floor(enemy_pos[0] / x_compression_ratio).astype(int))
-        enemy_y_bin = (np.floor(enemy_pos[1] / y_compression_ratio).astype(int))
-
-        return (player_x_bin, player_y_bin), (enemy_x_bin, enemy_y_bin)
-
     def argmax_random_on_ties(self, arr):
-        # The built-in np.argmax is problematic because, in the event of a tie,
-        # it always picks the first indexed item. This is could potentially
-        # cause issues in the Q-table which is initially initialized to all 0
-        # and so there would be lots of ties. So, the "random" action would be
+        # The built-in np.argmax is problematic because, in the event of a tie it always picks the first indexed item. This is could potentially
+        # cause issues in the buffer which is initially initialized to all 0 and so there would be lots of ties. So, the "random" action would be
         # heavily biased towards the first action in the array, no-op.
 
         actions = np.asarray(arr)
@@ -188,89 +137,109 @@ class Model():
 
         return action
 
-    def test(self):
-        # Tests the model by playing the game
+    def calculate_reward(self, state):
+        # Calculates the raw reward given a state
+        # Note that a single state comprises
+        # - player position and velocity,
+        # - enemy position, velocity, and type for every enemy on the screen
+        # - number of frames
+        # - number of enemies spawned
+        # - out of bounds
+        # - collision
+        # - game over
+        # - victory
 
-        self.game.reset()
-        while not self.game.game_over:
-            (player_pos, enemy_pos, _, _, _) = self.game.get_observation()
-            player_pos_binned, enemy_pos_binned = self.bin_positions(player_pos, enemy_pos)
+        # In this function we only care about non-character items
+        frames, enemies_spawned, oob, collision, game_over, victory = state[-6:]
+        # victory is 0 by default so only give bonus if game is over
+        victorious = (game_over and victory)
+        # There are 50k frames in a completed game so we don't want to weight it too highly
+        # This weighting doesn't have any real science behind it
+        reward = (.001 * frames) + (5 * enemies_spawned) - (100 * oob) - (100 * collision) + (200 * victorious)
 
-            # During testing we can either always pick the best move (deterministic)
-            # or just usually pick the best move. If we want to always pick the best move
-            # we need to pass in an arbitrarily high episode (obviously there is only 1 episode)
-            # to always trigger a deterministic best action
-            # Otherwise, we want epsilon = np.exp(-5 * (episode_num / self.num_episodes))
-            # to be equal to around .8
-            # See the description of self.choose_action() for more details
-            # Part of the above explanation is redundant after chaning the epsilon definition in choose_action()
+        return reward
 
-            if self.deterministic:
-                fake_episode = self.num_episodes * 100
+    def update_network(self):
+        # Calculates a network update and applies backpropagation
+
+        # Using torch because it is good practice in case I want to use GPUs
+        # We want to randomly sample batch_size samples from the buffer to preserve the expectation of the training set
+        samples = torch.randperm(len(self.replay_buffer))[:self.batch_size]
+        targets = torch.empty(self.batch_size)
+        predictions = torch.empty(self.batch_size)
+
+        for sample in samples:
+            # We need to process each sample
+            # If the sample is the final frame then we cannot calculate the target reward value
+            # Otherwise we use a similar formula to in Q Table model
+            # target = r + gamma * (max next move Q val)
+            [state, action, reward, state_after, done] = sample
+            target = None
+            if done:
+                target = reward
             else:
-                # This inverts the epsilon function to get .8. In other words, we will randomly
-                # choose a move 5% of the time
-                # fake_episode = -1 * (np.log(.8) * self.num_episodes) / 5
-                fake_episode = self.num_episodes * .05
+                # The network outputs the predicted Q values for making a move in a given state
+                # We will use this to form the target. The logical flaw in this is that we are using the network
+                # prediction as the target for which the network will evaluate itself against
+                Q_max = np.max(self.network(state_after))
+                target = reward + self.gamma * Q_max
 
-            action = self.choose_action(fake_episode, player_pos_binned, enemy_pos_binned)
-            self.game_step(action)
+            # prediction is the model's prediction of the Q value for taking the action we took in the state we were in
+            prediction = self.network(state)[action]
+
+            # And we compare that to the actual reward augmented by the predicted future reward
+            targets.append(target)
+            predictions.append(prediction)
+
+        loss = self.network.update(targets, predictions)
+
+        return loss
+
+    def unravel_observation(observation):
+        # Takes a nested array of tuples and arrays and returns a 1D list
+        # We want to return the output as a torch tensor to keep everything that will be sent to the model in torch
+
+        # We first have to turn the tuples into arrays
+        flat_observation = torch.tensor(np.ravel(observation))
+        return flat_observation
 
 
-class Q_Table():
-    # Separating Q-table from model for the benefit of future implementations
-    # The Q_Table class will hold the table and handle updating it
-    def __init__(self, num_player_x_bins, num_player_y_bins, num_enemy_x_bins, num_enemy_y_bins, num_player_actions):
-        # Initializing the Q-Table object
-        # I am just hard-coding for now that player_x_bins is 0
+class Network(torch.nn):
+    # In this version of the model we are using a Deep Quality Network (DQN)
+    # The network itself is a standard multilayer perceptron - a fully connected feed forward network
+    def __init__(self, channels, model_save_path):
+        super().__init__()
+        # The input state is very small so we can use a fully connected network
+        # There is no need for any convolutional layers. Especially because we are not passing in any image data
+        self.model_path = model_save_path
 
-        self.num_player_x_bins = 0
-        self.num_player_y_bins = num_player_y_bins
-        self.num_enemy_x_bins = num_enemy_x_bins
-        self.num_enemy_y_bins = num_enemy_y_bins
-        self.num_player_actions = num_player_actions
+        self.linear1 = nn.Linear(channels[0], channels[1])
+        self.linear2 = nn.Linear(channels[1], channels[2])
+        self.linear3 = nn.Linear(channels[2], channels[3])
 
-        # Always initialize a fresh table. This may be overwritten
-        self.init_table()
+    def forward(self, x):
+        x1 = nn.ReLU(self.linear1(x))
+        x2 = nn.ReLU(self.linear2(x1))
 
-    def init_table(self):
-        # Initalizes the table itself
-        # For this implementation the table will have dimension
-        # player_y_bin, missile_x_bin, missile_y_bin, action
+        # It would be incorrect to use a ReLU after the final linear layer because Q values below 0 are valid
+        # ReLU clips values below 0 to 0
+        x3 = self.linear3(x2)
+        return x3
 
-        # Ignoring player_x_bins for now
-        # The dimensions must be passed in as a tuple
-        table = np.zeros((self.num_player_y_bins, self.num_enemy_x_bins, self.num_enemy_y_bins, self.num_player_actions
-                          ))
-        self.table = table
+    def loss(self, prediction, target):
+        # Calculates the L2 loss for a prediction and a target
+        loss = nn.MSELoss(prediction, target)
+        return loss
 
-    def get(self, player_pos_binned, enemy_pos_binned, action):
-        # This gets a Q-value based on the player's coordinates, the enemy's
-        # coordinates, and the player's action
+    def update(self, prediction, target):
+        # Updates the gradient based on the loss
 
-        (player_x_bin, player_y_bin) = player_pos_binned
-        (enemy_x_bin, enemy_y_bin) = enemy_pos_binned
+        loss = self.loss(prediction, target)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
 
-        # Ignoring player x bins
-        return self.table[player_y_bin, enemy_x_bin, enemy_y_bin, action]
+        return loss
 
-    def set(self, player_pos_binned, enemy_pos_binned, action, value):
-        # This sets a Q-value based on the player's coordinates, the enemy's coordinates, and the player's action
-
-        (player_x_bin, player_y_bin) = player_pos_binned
-        (enemy_x_bin, enemy_y_bin) = enemy_pos_binned
-
-        # Ignoring player_x_bin
-        self.table[player_y_bin, enemy_x_bin, enemy_y_bin, action] = value
-
-    def save(self, path):
-        # Saves its own table to a file
-
-        np.save(path, self.table)
-
-    def load_table(self, path):
-        # Loads a saved Q-table from an existing table
-        # at a .npy path
-
-        table = np.load(path)
-        self.table = table
+    def save(self):
+        torch.save(self.state_dict(), self.model_path)

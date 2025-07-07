@@ -96,6 +96,10 @@ class Player(Character):
         # This will be used to trigger the exhaust image
         self.acceleration_flag = 0
 
+        # I am not sure if this is useful but it could be. Every character will have a type.
+        # The type for the player is 0
+        self.type = 0
+
     def move(self, action):
         # In this version of move we are taking a more realistic physics-based approach
         # An action will now correspond to a force which accelerates the player and modifies
@@ -197,6 +201,9 @@ class EnemyStraightMissile(Character):
         self.velocity.x = np.random.uniform(.5, 1) * ENEMYSTRAIGHTMISSILE_X_VELOCITY
         self.out_of_bounds = 0
 
+        # The enemy straight missile has type 1
+        self.type = 1
+
     def move(self, action=None):
         # In this version of the game we will take a more physics based approach to character movement
         # All characters are affected by gravity
@@ -242,6 +249,9 @@ class EnemyParabolaMissile(Character):
         self.velocity.x = np.random.uniform(.6, .85) * ENEMYSTRAIGHTMISSILE_X_VELOCITY
         self.velocity.y = np.random.uniform(3, 10)
         self.out_of_bounds = 0
+
+        # Enemy parabolic missile has type 2
+        self.type = 2
 
     def move(self, action=None):
         # In this version of the game we will take a more physics based approach to character movement
