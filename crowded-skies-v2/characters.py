@@ -33,7 +33,11 @@ class Character(pygame.sprite.Sprite):
         self.acceleration = pygame.Vector2(0, 0)
 
     def update(self, action=None):
-        raise NotImplementedError("Subclass must implement update")
+        # Updates the character's position according to its privately implemented movement method
+        # and checks bounds. Action can be none because enemies do not recieve input from the game
+
+        self.move(action)
+        self.check_bounds()
 
     def move(self, action=None):
         raise NotImplementedError("Subclass must implement move")
@@ -57,6 +61,18 @@ class Character(pygame.sprite.Sprite):
 
         self.acceleration.y -= GRAVITY_CONST
 
+    def draw(self):
+        # This is the default implementation of draw. Angle is based off of the velocity
+        # The player character will overwrite this
+
+        # Convert the velocity vector to polar coordinates (magnitude, angle) and keep the angle
+        # TODO THIS ANGLE CALCULATING ISN'T WORKING. I THINK IT IS BECAUSE OF THE INVERSION OF THE Y AXIS. FIX THIS.
+        # angle = self.velocity.as_polar()[1]
+        angle = np.rad2deg(np.arctan(self.velocity.y / self.velocity.x))
+        rotated_image = pygame.transform.rotate(self.image, round(angle))
+        new_rect = rotated_image.get_rect(center=self.rect.center)
+        self._game_surface.blit(rotated_image, new_rect)
+
 
 class Player(Character):
     # Using the character class for inheritance
@@ -79,12 +95,6 @@ class Player(Character):
 
         # This will be used to trigger the exhaust image
         self.acceleration_flag = 0
-
-    def update(self, action):
-        # Updates the player's position and checks for collisions
-
-        self.move(action)
-        self.check_bounds()
 
     def move(self, action):
         # In this version of move we are taking a more realistic physics-based approach
@@ -121,6 +131,7 @@ class Player(Character):
     def draw(self):
         # Draws the player onto the game surface
         # In this version we will also deal with rotation
+
         if self.crash:
             crash_image = pygame.transform.scale(pygame.image.load(EXPLOSION_IMG_PATH), (self.width, self.height * 3))
             self._game_surface.blit(crash_image, self.rect)
@@ -183,32 +194,70 @@ class EnemyStraightMissile(Character):
             y_pos = random.randint(int(self.header_height + self.height / 2), int(self.game_height - self.height / 2))
 
         self.rect.center = (x_pos, y_pos)
-        self.velocity.x = ENEMYSTRAIGHTMISSILE_X_VELOCITY
+        self.velocity.x = np.random.uniform(.5, 1) * ENEMYSTRAIGHTMISSILE_X_VELOCITY
         self.out_of_bounds = 0
 
-    def update(self):
-        # Updates the enemy's position and checks for collisions
-
-        self.move()
-        self.check_bounds()
-
-    def move(self):
+    def move(self, action=None):
         # In this version of the game we will take a more physics based approach to character movement
         # All characters are affected by gravity
         # This character will have a constant upward acceleration to offset gravity
         # And a constant leftward velocity set in the beginning
+
+        # Action will always be None for this. It needs to have action=None to correctly inheret from Character
 
         # I understand it is redundant to apply gravity then undo it through an upward acceleration
         # However, this more closely represents physical reality than simply having no acceleration in the
         # y direction at all
         self.apply_gravity()
         self.acceleration.y += GRAVITY_CONST
-
+        self.velocity += self.acceleration
         # Note we have to invert the y component of the velocity to reflect pygame's y coordinate convention
         self.rect.move_ip(self.velocity.x, -1 * self.velocity.y)
 
-    def draw(self):
-        # Draws the enemy onto the game surface
-        # No rotation because the straight missile moves in a straight line
 
-        self._game_surface.blit(self.image, self.rect)
+class EnemyParabolaMissile(Character):
+    # Using the built-in pygame.sprite.Sprite class for inheritance
+    # This missile follows a parabolic trajectory
+    def __init__(self, game_surface, game_width, game_height, header_height, init_pos=None):
+        super().__init__(game_surface, game_width, game_height, header_height)
+        # Instantiating the Enemy object visually
+        # If init_pos is a set of coordinates, initalize there. Otherwise, randomly
+
+        self.width = ENEMY_WIDTH
+        self.height = ENEMY_HEIGHT
+        self.image = pygame.transform.scale(pygame.image.load(ENEMYSTRAIGHTMISSILE_IMG_PATH), (self.width, self.height))
+
+        # The rect is the actual physical representation on the screen
+        self.rect = self.image.get_rect()
+
+        # This missile will come from the same position every time
+        x_pos = self.game_width + self.width / 2
+        y_pos = self.game_height - self.height / 2
+        self.rect.center = (x_pos, y_pos)
+
+        # However it will have randomly varying velocity and so trajectory
+        # I arrived upon these ranges through trial and error. I am hard coding them for now because
+        # I will not change them and changing them affects the movement and gameplay in unpredictable and
+        # usually negative ways
+        self.velocity.x = np.random.uniform(.6, .85) * ENEMYSTRAIGHTMISSILE_X_VELOCITY
+        self.velocity.y = np.random.uniform(3, 10)
+        self.out_of_bounds = 0
+
+    def move(self, action=None):
+        # In this version of the game we will take a more physics based approach to character movement
+        # All characters are affected by gravity
+        # This character will have a constant upward acceleration to offset gravity
+        # And a constant leftward velocity set in the beginning
+
+        # Action will always be None for this. It needs to have action=None to correctly inheret from Character
+
+        # I understand it is redundant to apply gravity then undo it through an upward acceleration
+        # However, this more closely represents physical reality than simply having no acceleration in the
+        # y direction at all
+        self.apply_gravity()
+
+        # Dividing the effect of gravity by this amount makes the parabolic motion 
+        # usually intersect with the player's position
+        self.velocity += self.acceleration / 160
+        # Note we have to invert the y component of the velocity to reflect pygame's y coordinate convention
+        self.rect.move_ip(self.velocity.x, -1 * self.velocity.y)

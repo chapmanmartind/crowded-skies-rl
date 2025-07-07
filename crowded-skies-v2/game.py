@@ -1,20 +1,19 @@
 # This is the file which handles game logic
-# In this version of the game the game will spawn 5 large missiles one after
-# the other at the player's current position
-# Dodging all 5 missiles constitutes winning the game
-# Being struck by the missle or going out of bounds
-# constitutes losing the game
+# In this version of the game the game will spawn several straight missiles, then several
+# parabolic missiles, then a mix of both. Surving all the missiles constitutes winning the game.
+# Being struck by the missle or going out of bounds constitutes losing the game
 # In this simplified version of the game you can only move up or down
 
 import pygame
-from pygame.locals import QUIT, K_UP, K_DOWN
+from pygame.locals import QUIT, K_UP, K_DOWN, K_SPACE, K_x
 import sys
 import random
 from constants import (SCREEN_WIDTH, SCREEN_HEIGHT, HEADER_HEIGHT, TITLE, BLACK, WHITE, RED, BLUE, PLAYER_ACTION_DICT,
                        GRAVITY_CONST, FORCE_CONST, PLAYER_IMG_PATH, EXHAUST_IMG_PATH, ENEMYSTRAIGHTMISSILE_IMG_PATH,
+                       BACKGROUND_IMG_PATH,
                        PLAYER_WIDTH, PLAYER_HEIGHT, ENEMY_WIDTH, ENEMY_HEIGHT)
 import numpy as np
-from characters import Character, Player, EnemyGroup, EnemyStraightMissile
+from characters import Character, Player, EnemyGroup, EnemyStraightMissile, EnemyParabolaMissile
 
 
 class Game:
@@ -32,14 +31,17 @@ class Game:
         self.height = SCREEN_HEIGHT
         # Number of pixels reserved for the header at the top
         self.header_height = HEADER_HEIGHT
-        self.title = TITLE
-
         self.player_action_dict = PLAYER_ACTION_DICT
 
         # Setting a display if we are rendering the game
         if self.render_mode:
+            self.title = TITLE
             self.font = pygame.font.SysFont('Arial', 60, bold=True)
+            self.subfont = pygame.font.SysFont('Arial', 30, bold=True)
             self._display_surface = pygame.display.set_mode([self.width, self.height])
+            self.top_text_image = self.font.render(self.title, True, WHITE)
+            self.background = pygame.transform.scale(pygame.image.load(BACKGROUND_IMG_PATH), (self.width, self.height))
+            self.header = pygame.Surface([self.width, self.header_height])
         else:
             self._display_surface = None
 
@@ -76,13 +78,8 @@ class Game:
         for event in self._events:
             if event.type == QUIT:
                 self.exit()
-
-        # We want to render before checking if game.pause because we don't want the movement updates to
-        # go off if the game is paused
-        if self.render_mode:
-            self.render()
-            if game.pause:
-                return
+                pygame.quit()
+                sys.exit()
 
         if not action:
             pressed_keys = pygame.key.get_pressed()
@@ -91,9 +88,23 @@ class Game:
                 action = self.player_action_dict['UP']
             elif pressed_keys[K_DOWN]:
                 action = self.player_action_dict['DOWN']
+            elif pressed_keys[K_SPACE]:
+                # For resetting the game in render_mode
+                game.reset()
+            elif pressed_keys[K_x]:
+                # To have a key to terminate the key
+                pygame.quit()
+                sys.exit()
             else:
                 # No operation
                 action = self.player_action_dict['NO-OP']
+
+        # We want to render before checking if game.pause because we don't want the movement updates to
+        # go off if the game is paused
+        if self.render_mode:
+            self.render()
+            if game.pause:
+                return
 
         # Manage the characters' behavior
         self.update_characters(action)
@@ -110,51 +121,60 @@ class Game:
     def set_background(self):
         # Manages the background and the header
         # Filling the white background
-        self._display_surface.fill(WHITE)
+
+        self._display_surface.blit(self.background, (0, self.header_height))
 
         # Creating the header font object text, antialias, color
-        header = pygame.Surface([self.width, self.header_height])
-        header.fill(BLUE)
+        self.header.fill(BLUE)
+        self._display_surface.blit(self.header, (0, 0))
 
-        # Header rectangle centered at center of header section
+        # Header text section
         if self.game_over:
-            self.title = "GAME OVER - YOU WON" if self.victory else "GAME OVER - YOU LOST"
+            top_text = "GAME OVER - YOU WON" if self.victory else "GAME OVER - YOU LOST"
+            top_text_image = self.subfont.render(top_text, True, WHITE)
+            top_text_size = top_text_image.get_size()
+            # We want the header text to be centered in the header
+            self._display_surface.blit(top_text_image, (self.width / 2 - top_text_size[0] / 2,
+                                                        self.header_height / 2 - top_text_size[1]))
+            sub_text = "Press space to reset or x to exit"
+            sub_text_image = self.subfont.render(sub_text, True, WHITE)
+            sub_text_size = sub_text_image.get_size()
+            self._display_surface.blit(sub_text_image, (self.width / 2 - sub_text_size[0] / 2,
+                                                        self.header_height / 2))
 
-        header_text = self.font.render(self.title, True, RED)
-        self._display_surface.blit(header, (0, 0))
+        else:
+            top_text_image = self.font.render(self.title, True, WHITE)
+            top_text_size = top_text_image.get_size()
+            self._display_surface.blit(top_text_image, (self.width / 2 - top_text_size[0] / 2,
+                                                        self.header_height / 2 - top_text_size[1] / 2))
+
         # Not ideal to hardcode position like this, but ok for now
-        self._display_surface.blit(header_text, (150, self.header_height / 2 - 30))
 
     def update_characters(self, action):
         # Manages the player and the enemies
 
         # Spawn an enemy if there are none one the screen
-        if not self.enemy_group and not self.no_enemies:
-            self.spawn_enemy(self.player.rect.center)
+        self.manage_gameplay()
 
         # Exit if survived 5 enemies
-        if self.spawned_enemy_count == 6:
-            self.victory = True
-            self.exit()
         if (self.frame % 40 == 0):
             self.player.update(action)
-        if (self.frame % 10 == 0):
+        if (self.frame % 20 == 0):
             self.enemy_group.update()
 
         if self.player.out_of_bounds:
             self.victory = False
+            self.player.crash = True
             self.exit()
 
         # Check for a collision between the player and any member of the enemy group
-        # Note that collision is actually the enemy object which was collided with
+        # Note that collision is actually the enemy object which was collided with. None if no collision.
         collided = pygame.sprite.spritecollideany(self.player, self.enemy_group)
         if collided:
-            self.game_over = True
             self.victory = False
             self.player.crash = True
             collided.kill()
-            self.pause = True
-            #self.exit()
+            self.exit()
 
     def exit(self):
         # Exiting the game
@@ -163,10 +183,7 @@ class Game:
         # so that way it can save game information before closing
 
         self.game_over = True
-        if self.human_mode and self.render_mode:
-            # If we are playing the game during testing we can just quit here
-            pygame.quit()
-            sys.exit()
+        self.pause = True
 
     def spawn_player(self):
         # Spawns the player
@@ -174,10 +191,19 @@ class Game:
         player = Player(self._display_surface, self.width, self.height, self.header_height, self.human_mode)
         self.player = player
 
-    def spawn_enemy(self, init_pos=None):
-        # Spawns an enemy
+    def spawn_enemy(self, type, init_pos=None):
+        # Spawns an enemy depending on the type
+        # Currently 0 = straight missile, 1 = parabola
 
-        enemy = EnemyStraightMissile(self._display_surface, self.width, self.height, self.header_height, init_pos)
+        match type:
+            # Matching isn't currently necessary but may be helpful in the future if there are many enemy types
+            case 0:
+                enemy = EnemyStraightMissile(self._display_surface, self.width, self.height, self.header_height,
+                                             init_pos)
+            case 1:
+                enemy = EnemyParabolaMissile(self._display_surface, self.width, self.height, self.header_height,
+                                             init_pos)
+
         self.enemy_group.add(enemy)
         self.spawned_enemy_count += 1
 
@@ -220,6 +246,49 @@ class Game:
         victory = self.victory
 
         return [player_pos, enemy_pos, enemies_survived, game_over, victory]
+
+    def manage_gameplay(self):
+        # This function will manage the gameplay - what enemies are spawned when
+        # and when the game is over
+        # This version of the game will have 3 sections. An all straight missile section,
+        # an all parabolic missile section, and then a mixed section. After finishing all that
+        # the game is over
+
+        if self.frame < 2000:
+            # Give the player some time to settle in
+            return
+
+        if self.frame < 15000:
+            # The introductory section
+            if not (self.frame % 1500):
+                # Firing only straight missiles. It isn't ideal to hard code the value
+                # used to represent types of missiles but for now probably ok
+                type = 0
+                self.spawn_enemy(type, self.player.rect.center)
+            return
+
+        if self.frame < 30000:
+            # The middle section
+            if not (self.frame % 1500):
+                # Firing only parabolic missiles
+                type = 1
+                self.spawn_enemy(type)
+            return
+
+        if self.frame < 50000:
+            # The final section
+            if not (self.frame % 1250):
+                # Randomly choose the type
+                type = np.random.randint(0, 2)
+                self.spawn_enemy(type, self.player.rect.center)
+            return
+
+        else:
+            # End the game when the screen is cleared of sprites
+            if not (len(self.enemy_group.sprites())):
+                self.victory = True
+                self.exit()
+
 
 human_mode = True
 render_mode = True
