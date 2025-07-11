@@ -90,7 +90,7 @@ class Game:
                 action = self.player_action_dict['DOWN']
             elif pressed_keys[K_SPACE]:
                 # For resetting the game in render_mode
-                game.reset()
+                self.reset()
             elif pressed_keys[K_x]:
                 # To have a key to terminate the key
                 pygame.quit()
@@ -103,7 +103,7 @@ class Game:
         # go off if the game is paused
         if self.render_mode:
             self.render()
-            if game.pause:
+            if self.pause:
                 return
 
         # Manage the characters' behavior
