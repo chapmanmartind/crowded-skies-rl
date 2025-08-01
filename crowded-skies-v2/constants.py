@@ -33,5 +33,7 @@ PLAYER_ACTION_DICT = {'NO-OP': 0, 'UP': 1, 'DOWN': 2}
 
 OBSERVATION_LEN = 30
 REPLAY_BUFFER_CAPACITY = 100000
-BATCH_SIZE = 32
-GAMMA = .01
+BATCH_SIZE = 128
+GAMMA = .99 # The look ahead factor
+TAU = .001 # Polyak updates. Weights are completely updated every 1 / TAU episodes
+

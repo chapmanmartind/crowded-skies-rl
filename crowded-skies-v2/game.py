@@ -7,13 +7,10 @@
 import pygame
 from pygame.locals import QUIT, K_UP, K_DOWN, K_SPACE, K_x
 import sys
-import random
-from constants import (SCREEN_WIDTH, SCREEN_HEIGHT, HEADER_HEIGHT, TITLE, BLACK, WHITE, RED, BLUE, PLAYER_ACTION_DICT,
-                       GRAVITY_CONST, FORCE_CONST, PLAYER_IMG_PATH, EXHAUST_IMG_PATH, ENEMYSTRAIGHTMISSILE_IMG_PATH,
-                       BACKGROUND_IMG_PATH,
-                       PLAYER_WIDTH, PLAYER_HEIGHT, ENEMY_WIDTH, ENEMY_HEIGHT)
+from constants import (SCREEN_WIDTH, SCREEN_HEIGHT, HEADER_HEIGHT, TITLE, WHITE, BLUE, PLAYER_ACTION_DICT,
+                       BACKGROUND_IMG_PATH)
 import numpy as np
-from characters import Character, Player, EnemyGroup, EnemyStraightMissile, EnemyParabolaMissile
+from characters import Player, EnemyGroup, EnemyStraightMissile, EnemyParabolaMissile
 
 
 class Game:
@@ -130,13 +127,21 @@ class Game:
 
         # Header text section
         if self.game_over:
-            top_text = "GAME OVER - YOU WON" if self.victory else "GAME OVER - YOU LOST"
+
+            if self.human_mode:
+                top_text = "GAME OVER - YOU WON" if self.victory else "GAME OVER - YOU LOST"
+                sub_text = "Press space to reset or x to exit"
+            else:
+                top_text = "GAME OVER - THE MODEL WON" if self.victory else "GAME OVER - THE MODEL LOST"
+                # outside of human mode we cannot get keyboard input. Pressing space or x won't work
+                sub_text = "Exit by closing the window and rerun the command to play again"
+
             top_text_image = self.subfont.render(top_text, True, WHITE)
             top_text_size = top_text_image.get_size()
             # We want the header text to be centered in the header
             self._display_surface.blit(top_text_image, (self.width / 2 - top_text_size[0] / 2,
                                                         self.header_height / 2 - top_text_size[1]))
-            sub_text = "Press space to reset or x to exit"
+
             sub_text_image = self.subfont.render(sub_text, True, WHITE)
             sub_text_size = sub_text_image.get_size()
             self._display_surface.blit(sub_text_image, (self.width / 2 - sub_text_size[0] / 2,
@@ -153,12 +158,20 @@ class Game:
     def update_characters(self, action):
         # Manages the player and the enemies
 
-        # Spawn an enemy if there are none one the screen
+        # Manage the pace of the game
         self.manage_gameplay()
 
-        # Exit if survived 5 enemies
-        if (self.frame % 40 == 0):
+        # The game is too fast for humans and feels jerky if we update the player every frame
+        if self.human_mode:
+            if (self.frame % 40 == 0):
+                self.player.update(action)
+
+        # However, updating the player only every 40 frames massively slows down training.
+        # And the computer doesn't care how fast the gameplay is. So, for the computer the
+        # player will update every frame
+        else:
             self.player.update(action)
+
         if (self.frame % 20 == 0):
             self.enemy_group.update()
 
@@ -238,10 +251,10 @@ class Game:
         observation = []
 
         # Adding the player observations
-        observation.append(self.player.rect.center[0])
-        observation.append(self.player.rect.center[1])
-        observation.append(self.player.velocity.x)
-        observation.append(self.player.velocity.y)
+        observation.append(self.player.rect.center[0] / self.width)
+        observation.append((self.player.rect.center[1]) / self.height)
+        observation.append(self.player.velocity.x / 10)
+        observation.append(self.player.velocity.y / 10)
 
         # Adding the enemy observations
         enemy_group = self.enemy_group.sprites()
@@ -253,16 +266,16 @@ class Game:
                 pygame.quit()
                 sys.exit()
             enemy = enemy_group[i]
-            enemy_buffer[5 * i] = enemy.rect.center[0]
-            enemy_buffer[5 * i + 1] = enemy.rect.center[1]
-            enemy_buffer[5 * i + 2] = enemy.velocity.x
-            enemy_buffer[5 * i + 3] = enemy.velocity.y
+            enemy_buffer[5 * i] = (enemy.rect.center[0] / self.width)
+            enemy_buffer[5 * i + 1] = ((enemy.rect.center[1]) / self.height)
+            enemy_buffer[5 * i + 2] = enemy.velocity.x / 10
+            enemy_buffer[5 * i + 3] = enemy.velocity.y / 10
             enemy_buffer[5 * i + 4] = enemy.type
 
         observation += enemy_buffer
 
         # Adding the general game observations
-        observation.append(self.frame)
+        observation.append(self.frame / 50000)
         observation.append(self.spawned_enemy_count)
         observation.append(self.player.out_of_bounds)
         observation.append(self.player.crash)

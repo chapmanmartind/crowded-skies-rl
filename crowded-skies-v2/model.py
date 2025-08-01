@@ -1,17 +1,14 @@
 # In this model we will implement the Q-Learning algorithm
 
 from game import Game
-from constants import (SCREEN_WIDTH, SCREEN_HEIGHT, NUM_WIDTH_BINS, NUM_HEIGHT_BINS,
-                       OBSERVATION_LEN, REPLAY_BUFFER_CAPACITY, BATCH_SIZE, GAMMA,
-                       NUM_PLAYER_ACTIONS, PLAYER_ACTION_DICT)
+from constants import (SCREEN_WIDTH, SCREEN_HEIGHT, HEADER_HEIGHT,
+                       OBSERVATION_LEN, REPLAY_BUFFER_CAPACITY, BATCH_SIZE, GAMMA, TAU,
+                       NUM_PLAYER_ACTIONS)
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optimizer
-from torchmetrics import MeanMetric
+from torch.nn.utils import clip_grad_norm_
 import random
-import sys
 
 
 class DQN():
@@ -22,19 +19,28 @@ class DQN():
 
         # Testing is True for testing, False for training
         self.testing = testing
+
+        self.screen_width = SCREEN_WIDTH
+        self.screen_height = SCREEN_HEIGHT
+        self.header_height = HEADER_HEIGHT
+
         # Render is True for rendering the screen and gameplay, False for no render (training and evaluation)
         self.render = render
         self.num_episodes = num_episodes
         self.model_save_path = model_save_path
         self.batch_size = BATCH_SIZE
         self.gamma = GAMMA
+        self.tau = TAU
         self.num_player_actions = NUM_PLAYER_ACTIONS
         self.observation_len = OBSERVATION_LEN
         self.replay_buffer_capacity = REPLAY_BUFFER_CAPACITY
         # The DQN will utilize a replay buffer which is an array of the following
-        # state, action, reward, following state, and done (a boolean that indicates if the game finished after this state)
-        # I am going to define a blank replay and fill the replay buffer with this. I know this is not ideal and trains the model on false data
-        # However, by doing this I don't have the handle the logic of only selecting from parts of the buffer that have been written to
+        # state, action, reward, following state, and done
+        # (a boolean that indicates if the game finished after this state)
+        # I am going to define a blank replay and fill the replay buffer with this.
+        # I know this is not ideal and trains the model on false data
+        # However, by doing this I don't have the handle the logic of
+        # only selecting from parts of the buffer that have been written to
         # A single state comprises
         # - player position and velocity,
         # - enemy position, velocity, and type for every enemy on the screen
@@ -51,7 +57,14 @@ class DQN():
         # The full buffer flag will be used later when we only want to train after the buffer has been filled
         self.num_frames = 0
 
+        # This will be used in testing
+        self.losses = []
+        self.episode_lens = []
+
         self.network = Network(channels, model_save_path)
+        self.target_network = Network(channels, "")
+        self.target_network.load_state_dict(self.network.state_dict())
+
         if self.testing:
             # If we are testing we will load the model from the path
             self.network.load()
@@ -68,7 +81,11 @@ class DQN():
         # then randomly sample the training buffer and use that data as our training data
         # Note that all functions work on flattened observations and not as they come from the game
 
-        loss_avg = MeanMetric()
+        # We are going to define a previous reward to hold the reward from the previous frame
+        # This will allow us to calculate reward jumps
+        previous_reward = torch.tensor([0])
+
+        personal_best = 10000
 
         # Episode should start at 1 because 0th episode isn't logical, it's the first episode
         # Also useful later to prevent checking loss on 0th episode
@@ -83,7 +100,7 @@ class DQN():
                 # I am going to carefully document the shapes of the tensors in this section for clarity and debugging
                 # I want all the values to be 1D arrays for ease when I unpack the dictionary
 
-                state = torch.tensor(self.game.get_observation())  # 30,
+                state = torch.as_tensor(self.game.get_observation(), dtype=torch.float32)  # 30,
 
                 # The network predicts the rewards associated with each move in this state
                 rewards = self.network(state).detach().clone()  # 3,
@@ -93,10 +110,10 @@ class DQN():
                 action = self.choose_action(rewards, episode)  # 1,
 
                 self.game.update(action.item())
-                state_after = torch.tensor(self.game.get_observation())  # 30,
+                state_after = torch.as_tensor(self.game.get_observation(), dtype=torch.float32)  # 30,
 
                 reward = torch.tensor([self.calculate_reward(state_after)])  # 1,
-                print(reward.item())
+
                 game_over_int = torch.tensor([self.game.game_over])  # 1,
 
                 transition = {'state': state,
@@ -105,31 +122,65 @@ class DQN():
                               'state_after': state_after,
                               'game_over_int': game_over_int}
 
-                # We want the replay buffer to be overwritten in a round robin pattern
-                idx = self.num_frames % self.replay_buffer_capacity - 1
-                self.replay_buffer[idx] = transition
+                # We are going to implemented a weighted transition assignment to set more entries of the replay buffer
+                # to important (large reward jump) transitions
+                self.update_replay_buffer(transition, reward, previous_reward)
 
                 # We only want to train if the replay buffer has already been completely filled
                 # and we have enough new replays
-                if (self.num_frames > self.replay_buffer_capacity) and (not self.num_frames % self.batch_size):
+                # TRYING OUT self.batch size / 4 CHANGE FOR MORE FREQUENT TRAINING
+                if (self.num_frames > self.replay_buffer_capacity) and (not self.num_frames % (self.batch_size / 4)):
                     loss = self.update_network()
-                    loss_avg.update(loss)
+                    self.losses.append(loss)
+
+                    # Updating the network via Soft (Polyak) updates to avoid sudden network changes
+                    for p, p_bar in zip(self.network.parameters(), self.target_network.parameters()):
+                        p_bar.data.mul_(1 - self.tau)
+                        p_bar.data.add_(self.tau * p.data)
+
+                previous_reward = reward
+
+            # Adding the frame which the game ended at to see game length progression
+            self.episode_lens.append(self.game.frame)
+
+            if self.game.frame > personal_best:
+                print("\n New personal best: ", self.game.frame)
+                personal_best = self.game.frame
 
             if not (episode % 100):
-                print(f"The average loss is {loss_avg.compute().item()}")
+                print(f"The recent avg game length is {np.sum(self.episode_lens[-100:]) / 100}")
+                print(f"The recent avg loss is {np.sum(self.losses[-100:]) / 100}")
                 print(f"{episode / self.num_episodes * 100}% done with training")
+                print("\n\n")
 
         self.network.save()
+        print("Training completed and network saved")
+        print("\nOverall personal best: ", personal_best)
+        return 1
 
     def test(self):
+        # This function runs the model on the weights
+
         self.game.reset()
         # Setting episode to high to make sure always best move
-        episode = 1000000
-        while not self.game.game_over:
-            state = torch.tensor(self.game.get_observation())
-            rewards = self.network(state)
-            action = self.choose_action(rewards, episode)
-            self.game.update(action.item())
+        episode = 1000
+
+        # If we are rendering we don't want to exit automatically
+        if self.render:
+            while 1:
+                state = torch.tensor(self.game.get_observation())
+                rewards = self.network(state)
+                action = self.choose_action(rewards, episode)
+                self.game.update(action.item())
+
+        else:
+            while not self.game.game_over:
+                state = torch.tensor(self.game.get_observation())
+                rewards = self.network(state)
+                action = self.choose_action(rewards, episode)
+                self.game.update(action.item())
+
+        print("Game ended at frame: ", self.game.frame)
 
     def choose_action(self, rewards, episode):
         # This function takes in rewards as a tensor and episode as an int
@@ -144,9 +195,19 @@ class DQN():
         # episode_num = 100 * self.num_episodes which will make the odds of the
         # random action triggering arbitrarily close to 0
 
-        # The value of epsilon here is defined as a negative exponential
-        # as a function of the episode number
-        epsilon = torch.exp(torch.tensor(-5 * (episode / self.num_episodes)))
+        # x will represent what percent of training we are finished with
+        x = episode / self.num_episodes
+
+        # Based on testing this is the best epsilon pattern.
+        # Try starting at .25 and decreasing to .01
+        # Apparently we always want a minimum randomness of .01 to explore possibilities
+        epsilon = max(.25 - (x / 4), .01)
+
+        # I want to give the model a decent amount of space at the end to train its final version
+        # This section will also be used during testing
+        if (episode / self.num_episodes) > .9:
+            epsilon = 0
+
         action = None
 
         if epsilon > torch.rand(1).item():
@@ -154,24 +215,12 @@ class DQN():
             action = torch.randint(0, self.num_player_actions, (1, ))
         else:
             # choose the best action
-            # This isn't best practice because I am hard-coding the actions with their values rather than using
-            # the action dictionary but doing otherwise is too much of a headache
-            # Converting to torch.tensor to use tensors throughout
-            action = torch.tensor([self.argmax_random_on_ties(rewards)])
 
-        return action
-
-    def argmax_random_on_ties(self, arr):
-        # The built-in np.argmax is problematic because, in the event of a tie it always picks the first indexed item. This is could potentially
-        # cause issues in the buffer which is initially initialized to all 0 and so there would be lots of ties. So, the "random" action would be
-        # heavily biased towards the first action in the array, no-op. We therefore want a truly random tiebreaker
-        # This function outputs an int, not a tensor
-
-        max_values = torch.max(arr)
-        # We need the indexies of the max elements to randomly select from them
-        candidate_idxs = torch.where(arr == max_values)[0]
-        # torch.where returns the indexes of the values that have the max value
-        action = random.choice(candidate_idxs)
+            # Instead of using my random function I want to use the built in random which biases towards
+            # the first element
+            # Which is most likely to be no-op, and then up, and then down. This is exactly the subtle bias I want
+            # keepdim = True because I want it to be a 1D array like in the previous action
+            action = torch.argmax(rewards, keepdim=True)
 
         return action
 
@@ -188,13 +237,17 @@ class DQN():
         # - victory
         # Note that this function works on a FLATTENED state
 
-        # In this function we only care about non-character items
+        player_pos = state[:2]
+
+        # Adding distance from center as part of reward because having trouble with going out of bounds
+        distance_from_center = abs(player_pos[1] - 0.5)
+
         frames, enemies_spawned, oob, collision, game_over, victory = state[-6:]
         # victory is 0 by default so only give bonus if game is over
         victorious = (game_over and victory)
-        # There are 50k frames in a completed game so we don't want to weight it too highly
-        # This weighting doesn't have any real science behind it
-        reward = (.001 * frames) + (5 * enemies_spawned) - (100 * oob) - (100 * collision) + (200 * victorious)
+        # This weighting is based on extensive testing. I'm not sure why this is what works
+        not_dead = not collision
+        reward = (.1 * not_dead) + (-0.1 * distance_from_center) + (-1.0 * collision) + (1.0 * victorious)
 
         return reward
 
@@ -213,27 +266,27 @@ class DQN():
         state_afters = torch.stack([sample['state_after'] for sample in samples])  # 32 x 30
         game_over_ints = torch.stack([sample['game_over_int'] for sample in samples])  # 32 x 1
 
-        # It will be useful to invert the game over ints
-        inverted_game_over_ints = ~ game_over_ints  # 32 x 1
-
+        # We want to use game_over_ints to create a mask. If the game is over we want that section to be 0, 1 otherwise
+        mask = 1 - game_over_ints.float()  # 32 x 1
         # We want to get the predicted rewards for our model for the actions we took
         # then we want to compare these rewards against the actual rewards we got, modified by
         # a prediction of future rewards
         outputs = self.network(states)  # 32 x 3 because network's output dim is 3
         # We then want to index into these outputs and select only the values prescriped by actions (indexes)
         predictions = outputs.gather(1, actions)  # 32 x 1
-
         # The network outputs the predicted Q values for making a move in a given state
         # We will use this to form the target. The logical flaw in this is that we are using the network's
         # prediction as the target for which the network will evaluate itself against
-        max_future_values, _ = torch.max(self.network(state_afters), dim=1, keepdim=True)  # 32 x 3 --> 32 x 1
+        # Now trying to use target_network
+        max_future_values, _ = torch.max(self.target_network(state_afters).detach().clone(), dim=1, keepdim=True)
+        # 32 x 3 --> 32 x 1
 
         # I want only want to add the future value factor if the game is NOT already over. If the game
         # is already over then the future value factor is 0
         # This is why we created inverted_game_over_ints to work as a mask
-        targets = rewards + self.gamma * (max_future_values * inverted_game_over_ints)
+        targets = rewards + self.gamma * (max_future_values * mask)  # 32 x 1
 
-        loss = self.network.update(targets, predictions)
+        loss = self.network.update(predictions, targets)
 
         return loss
 
@@ -247,6 +300,22 @@ class DQN():
             else:
                 result.append(item)
         return result
+
+    def update_replay_buffer(self, transition, reward, previous_reward):
+        # We want to weight transitions with large reward jumps more heavily than transitions with small reward jumps
+        # Large reward jumps indicate that this particular move is more important than previous moves
+
+        # We want the replay buffer to be overwritten in a round robin pattern
+        idx = (self.num_frames - 1) % self.replay_buffer_capacity
+        self.replay_buffer[idx] = transition
+
+        # To provide more weight to large jump transitions
+        # we are going to set extra replays from the buffer to these transitions
+        reward_weighting = int(abs((reward.item() - previous_reward.item()) * 10))
+        extra_transitions = max(0, reward_weighting)
+        idxs = random.sample(range(self.replay_buffer_capacity), extra_transitions)
+        for idx in idxs:
+            self.replay_buffer[idx] = transition
 
 
 class Network(nn.Module):
@@ -264,8 +333,9 @@ class Network(nn.Module):
 
         self.relu = nn.ReLU()
 
-        self.L2 = nn.MSELoss()
-        self.optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
+        self.L1 = nn.SmoothL1Loss()
+        # Trying an extremely slow learning rate
+        self.optimizer = torch.optim.Adam(self.parameters(), lr=0.00005)
 
     def forward(self, x):
         x1 = self.relu(self.linear1(x))
@@ -278,7 +348,7 @@ class Network(nn.Module):
 
     def loss(self, prediction, target):
         # Calculates the L2 loss for a prediction and a target
-        loss = self.L2(prediction, target)
+        loss = self.L1(prediction, target)
         return loss
 
     def update(self, prediction, target):
@@ -287,20 +357,16 @@ class Network(nn.Module):
         loss = self.loss(prediction, target)
         self.optimizer.zero_grad()
         loss.backward()
+
+        # Trying gradient clipping for stability
+        clip_grad_norm_(self.parameters(), max_norm=1.0)
+
         self.optimizer.step()
 
-        return loss
+        return loss.item()
 
     def save(self):
         torch.save(self.state_dict(), self.model_path)
 
     def load(self):
         self.load_state_dict(torch.load(self.model_path))
-
-
-testing = False
-render = False
-num_episodes = 10000
-model_save_path = "test.pth"
-model = DQN(testing, render, num_episodes, model_save_path)
-model.train()
