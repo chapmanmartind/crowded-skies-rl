@@ -1,16 +1,16 @@
 # CROWDED SKIES
 
 A personal project to learn Reinforcement Learning and improve my software engineering skills.
-This project comprises a simple projectile dodging game and a Q-Learning Reinforcement model on top of it.
+This project comprises a simple projectile dodging game and a Deep Q-Learning (DQN) Reinforcement model on top of it.
 The model was built from scratch and does not use any RL libraries. The game is built on top of pygame, a minimal game library.
-You can play the game or watch the model play it. You can also train new "weights" for the model for yourself. 
+You can play the game or watch the model play it. You can also train new "weights" for the model for yourself, and watch the model play on those weights.
 
 # Install
 
 1. Clone the repo:
 ```bash
-    git clone https://github.com/chapmanmartind/crowded-skies-v1.git
-    cd crowded-skies-v1
+    git clone https://github.com/chapmanmartind/crowded-skies-v2.git
+    cd crowded-skies-v2
 ```
 
 2. Install dependencies
@@ -20,7 +20,7 @@ You can play the game or watch the model play it. You can also train new "weight
 
 # Play the game or watch the model play
 
-To play the game run
+To play the game yourself run
 ```bash 
     python3 main.py play
 ```
@@ -35,6 +35,9 @@ To watch a specific model (number of training episodes) play the game run
     python3 main.py run {model_path}
 ```
 
-There are several models in the models directory. "Q_table_0_episodes.npy" corresponds to completely random behavior and serves as a baseline. 
+To train the model run
+```bash
+    python3 main.py train {number of episodes}
+```
 
-See game.py for the game code, model.py for the model code, and testing.py for some auxilliary training and testing functions.
+The default model is "pretrained_500k_episodes.pth". Training the model for 500k episodes took me a week on my Mac without GPU usage.
