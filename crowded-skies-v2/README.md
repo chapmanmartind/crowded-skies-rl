@@ -5,6 +5,11 @@ This project comprises a simple projectile dodging game and a Deep Q-Learning (D
 The model was built from scratch and does not use any RL libraries. The game is built on top of pygame, a minimal game library.
 You can play the game or watch the model play it. You can also train new "weights" for the model for yourself, and watch the model play on those weights.
 
+
+
+View a demo of the game here:
+https://www.youtube.com/watch?v=SydTyij83Ao
+
 # Install
 
 1. Clone the repo:
